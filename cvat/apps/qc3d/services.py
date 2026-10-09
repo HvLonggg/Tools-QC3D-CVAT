@@ -148,69 +148,92 @@ class FixError(Exception):
         self.status_code = status_code
 
 
-def _patch(job: Job, shape: dict, action: PatchAction) -> dict:
+def _patch(job: Job, action: PatchAction, *, shapes=(), tracks=()) -> dict:
     serializer = LabeledDataSerializer(
-        data={"version": 0, "tags": [], "shapes": [shape], "tracks": []},
+        data={"version": 0, "tags": [], "shapes": list(shapes), "tracks": list(tracks)},
         context={"annotation_action": action},
     )
     serializer.is_valid(raise_exception=True)
     return patch_job_data(job.id, serializer.validated_data, action)
 
 
-def _current_shape(job: Job, shape_id: int) -> dict | None:
-    return next((s for s in get_job_data(job.id)["shapes"] if s["id"] == shape_id), None)
-
-
 def _same(a: list[float], b: list[float], eps: float = 1e-3) -> bool:
     return len(a) >= 9 and len(b) >= 9 and all(abs(float(x) - float(y)) <= eps for x, y in zip(a[:9], b[:9]))
 
 
+def _locate(job: Job, uid: str) -> tuple[str, dict | None, dict | None]:
+    """uid -> (kind, CVAT object (shape or whole track), the cuboid shape QC looked at)."""
+    kind, _, rest = uid.partition(":")
+    data = get_job_data(job.id)
+    if kind == "s":
+        shape = next((s for s in data["shapes"] if s["id"] == int(rest)), None)
+        return "shape", shape, shape
+    track_id, _, frame = rest.partition(":")
+    track = next((t for t in data["tracks"] if t["id"] == int(track_id)), None)
+    keyframe = next((s for s in track["shapes"] if s["frame"] == int(frame)), None) if track else None
+    return "track", track, keyframe
+
+
+def _siblings(issue: QcIssue):
+    """Issues of the same run and object that carry the same proposal: one fix resolves them all."""
+    return [
+        other for other in QcIssue.objects.filter(run=issue.run, uid=issue.uid)
+        if other.proposal == issue.proposal
+    ]
+
+
 @transaction.atomic
 def apply_fix(issue: QcIssue, user) -> QcIssue:
-    """Write the proposed correction to the CVAT job (shapes only), keeping the previous state."""
+    """Write the proposed correction to the CVAT job, keeping the previous state for revert."""
     if not issue.proposal:
         raise FixError("Vấn đề này không có đề xuất sửa", 422)
     if issue.fix_status == FixStatus.APPLIED:
         raise FixError("Đề xuất đã được áp dụng", 409)
-    kind, _, raw_id = issue.uid.partition(":")
-    if kind != "s":
-        raise FixError("Chưa hỗ trợ sửa tự động cho track; sửa trên CVAT", 422)
 
     job = issue.run.job
-    shape = _current_shape(job, int(raw_id))
-    if shape is None:
+    kind, obj, target = _locate(job, issue.uid)
+    if obj is None or target is None:
         raise FixError("Đối tượng không còn trên CVAT; chạy lại QC", 409)
     labels = dict(job.get_labels().values_list("id", "name"))
     if issue.snapshot and (
-        not _same(shape["points"], issue.snapshot["points"]) or labels.get(shape["label_id"]) != issue.snapshot["label"]
+        not _same(target["points"], issue.snapshot["points"])
+        or labels.get(obj["label_id"]) != issue.snapshot["label"]
     ):
         raise FixError("Nhãn đã bị thay đổi sau lần QC; chạy lại QC trước khi sửa", 409)
 
-    before = copy.deepcopy(shape)
+    before = copy.deepcopy(obj)
     if issue.proposal["kind"] == "delete":
-        _patch(job, shape, PatchAction.DELETE)
+        if kind == "track":
+            raise FixError("Không tự xoá track; xoá keyframe trên CVAT", 422)
+        _patch(job, PatchAction.DELETE, shapes=[obj])
     else:
         changes = issue.proposal["changes"]
-        points = list(shape["points"])
+        points = list(target["points"])
         for name, offset in (("position", 0), ("rotation", 3), ("scale", 6)):
             if name in changes:
                 points[offset:offset + 3] = changes[name]
-        shape["points"] = points
+        target["points"] = points
         if "label" in changes:
             label_ids = {name: label_id for label_id, name in labels.items()}
             if changes["label"] not in label_ids:
                 raise FixError(f"Schema chưa có class {changes['label']}; thêm label vào project trước", 422)
-            shape["label_id"] = label_ids[changes["label"]]
-        _patch(job, shape, PatchAction.UPDATE)
+            obj["label_id"] = label_ids[changes["label"]]  # for a track: the class of the whole track
+        if kind == "track":
+            _patch(job, PatchAction.UPDATE, tracks=[obj])
+        else:
+            _patch(job, PatchAction.UPDATE, shapes=[obj])
 
-    issue.fix_status = FixStatus.APPLIED
-    issue.fix_before = before
-    issue.fixed_by = user
-    issue.fixed_date = timezone.now()
-    issue.status = IssueStatus.CONFIRMED
-    issue.decided_by = issue.decided_by or user
-    issue.decided_date = issue.decided_date or issue.fixed_date
-    issue.save()
+    now = timezone.now()
+    for other in _siblings(issue):
+        other.fix_status = FixStatus.APPLIED
+        other.fix_before = before
+        other.fixed_by = user
+        other.fixed_date = now
+        other.status = IssueStatus.CONFIRMED
+        other.decided_by = other.decided_by or user
+        other.decided_date = other.decided_date or now
+        other.save()
+    issue.refresh_from_db()
     return issue
 
 
@@ -221,17 +244,25 @@ def revert_fix(issue: QcIssue, user) -> QcIssue:
         raise FixError("Chưa có bản sửa nào để hoàn tác", 409)
     job = issue.run.job
     before = copy.deepcopy(issue.fix_before)
+    kind, obj, _ = _locate(job, issue.uid)
     if issue.proposal and issue.proposal["kind"] == "delete":
-        before.pop("id", None)  # the object was deleted: re-create it
-        _patch(job, before, PatchAction.CREATE)
+        before.pop("id", None)  # the shape was deleted: re-create it
+        _patch(job, PatchAction.CREATE, shapes=[before])
     else:
-        if _current_shape(job, before["id"]) is None:
+        if obj is None:
             raise FixError("Đối tượng đã bị xoá trên CVAT; không hoàn tác được", 409)
-        _patch(job, before, PatchAction.UPDATE)
-    issue.fix_status = FixStatus.REVERTED
-    issue.fixed_by = user
-    issue.fixed_date = timezone.now()
-    issue.save(update_fields=["fix_status", "fixed_by", "fixed_date"])
+        if kind == "track":
+            _patch(job, PatchAction.UPDATE, tracks=[before])
+        else:
+            _patch(job, PatchAction.UPDATE, shapes=[before])
+
+    now = timezone.now()
+    for other in _siblings(issue):
+        other.fix_status = FixStatus.REVERTED
+        other.fixed_by = user
+        other.fixed_date = now
+        other.save(update_fields=["fix_status", "fixed_by", "fixed_date"])
+    issue.refresh_from_db()
     return issue
 
 

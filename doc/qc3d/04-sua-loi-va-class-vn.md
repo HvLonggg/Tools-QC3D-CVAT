@@ -32,10 +32,10 @@ Vì LiDAR chỉ thấy mặt quay về cảm biến, bản sửa không co box t
 
 | Loại lỗi | Phát hiện | IoU trước sửa | IoU sau sửa | Đạt IoU ≥ 0,7 |
 | --- | --- | --- | --- | --- |
-| Lệch (dịch 1–3 m) | 96% | 0,00 | 0,78 | 82% |
-| Rộng hơn vật (0,6–1 m) | 94% | 0,66 | 0,75 | 70% |
-| Lơ lửng 0,5–1 m | 100% | 0,39 | 0,96 | 100% |
-| Chìm 0,5–1 m | 100% | 0,40 | 0,94 | 100% |
+| Lệch (dịch 1–3 m) | 96% | 0,00 | 0,69 (trung vị 0,81) | 76% |
+| Rộng hơn vật (0,6–1 m) | 94% | 0,66 | 0,75 | 74% |
+| Lơ lửng 0,5–1 m | 100% | 0,39 | 0,90 | 94% |
+| Chìm 0,5–1 m | 100% | 0,40 | 0,88 | 100% |
 | Sai class | 100% | — | class đúng 49/50 | — |
 | Trùng lặp | 100% | — | xoá đúng 50/50 | — |
 | **Tổng (10 loại lỗi)** | **98,8% (494/500)** | | | |
@@ -43,6 +43,12 @@ Vì LiDAR chỉ thấy mặt quay về cảm biến, bản sửa không co box t
 Cảnh báo sai mới trên đối tượng không bị chèn lỗi: 0. Lệnh: `.venv-qc3d\Scripts\python utils\qc3d\eval_injected.py --data D:\dataset\cvat\residential`.
 
 Trên nhãn gốc PHENIKAA: R11 chỉ ra 8 "Car" thực chất là Truck/Bus; R09 chỉ ra 8 box lệch mặt đường (7 minor).
+
+### Một bản sửa cho mỗi đối tượng (rules 2026.10.4)
+
+Các rule hình học (R05, R06, R09, R10, R11) của cùng một đối tượng dùng chung **một** đề xuất, theo nguyên tắc sửa tối thiểu: chỉ đổi phần rule chỉ ra là sai (class → kích thước không hợp class → vị trí theo mặt nhìn thấy → đáy lên mặt đường). R11 dùng cả kích thước cụm điểm: cụm điểm cỡ xe máy thì không thể là Truck dù box vẽ to.
+
+Ca thực tế (job 23, frame 1): xe máy gán `Truck`, box 1,87 × 1,92 × 2,05 m, lơ lửng 0,3 m → đề xuất `Rider`, rộng 0,85 m, cao 1,69 m, đáy chạm đường; ô tô gán `Truck` → đề xuất `Car`.
 
 ## 4. Ghi vào CVAT
 
@@ -52,7 +58,7 @@ Trên nhãn gốc PHENIKAA: R11 chỉ ra 8 "Car" thực chất là Truck/Bus; R0
 | `POST /api/qc3d/issues/{id}/revert` | lead, reviewer | Khôi phục đúng shape trước sửa (tạo lại nếu đã xoá) |
 | `GET /api/qc3d/taxonomy` | mọi user | Bộ class VN |
 
-Bảo vệ dữ liệu: nếu shape trên CVAT khác ảnh chụp lúc chạy QC → 409, yêu cầu chạy lại QC. Chưa hỗ trợ sửa track tự động (422).
+Bảo vệ dữ liệu: nếu shape trên CVAT khác ảnh chụp lúc chạy QC → 409, yêu cầu chạy lại QC. Track: sửa đúng keyframe tại frame đó; đổi class áp cho cả track (CVAT lưu class theo track); không tự xoá track.
 
 Đã kiểm tra trên job 23: Car → Truck ghi vào CVAT; áp lại → 409; hoàn tác → shape giống hệt ban đầu; shape bị đổi sau QC → 409; user không có vai trò → 403.
 
@@ -60,4 +66,3 @@ Bảo vệ dữ liệu: nếu shape trên CVAT khác ảnh chụp lúc chạy QC
 
 - Box rộng hơn vật: chỉ thấy được ở mặt hướng cảm biến; mặt khuất cần nhiều frame (track) hoặc model.
 - Ngưỡng trên đo trên 1 frame (114 đối tượng); cần đo lại trên nhiều sequence trước khi tự động áp dụng.
-- Chưa sửa tự động cho track.

@@ -18,11 +18,11 @@ from typing import Callable
 
 import numpy as np
 
-from .fit import describe_change, observe, propose_fit, visible_face_gaps
+from .fit import class_from_points, describe_change, observe, propose_fit, propose_object_fix, visible_face_gaps
 from .geometry import Cuboid, count_points, iou_3d, wrap_angle
 from .taxonomy import CLASSES, best_class_by_size, size_log_likelihood
 
-RULES_VERSION = "2026.10.3"
+RULES_VERSION = "2026.10.4"
 
 BLOCKER, MAJOR, MINOR = "blocker", "major", "minor"
 
@@ -446,9 +446,29 @@ def r11_class_by_size(ctx: QcContext) -> RuleResult:
     cfg = ctx.config
     candidates = [name for name in CLASSES]
     result = RuleResult("R11", "checked")
-    for box in _valid(ctx.cuboids):
+    boxes = _valid(ctx.cuboids)
+    for box in boxes:
         if box.label not in CLASSES:
             continue
+        # 1) the LiDAR cluster cannot be this class (e.g. a motorbike labeled Truck)
+        if box.frame in ctx.point_clouds and box.distance <= cfg["fit_max_distance"]:
+            obs = observe(ctx.point_clouds[box.frame], box, boxes)
+            from_points = class_from_points(obs, box)
+            if from_points:
+                in_schema = from_points in cfg["labels"]
+                result.issues.append(
+                    Issue("R11", MAJOR, box.uid, box.frame,
+                          f"Nghi sai class: cụm điểm LiDAR là cỡ {from_points}, không thể là {box.label}"
+                          + ("" if in_schema else f" (schema chưa có class {from_points})"),
+                          {"suggested": from_points, "source": "points", "in_schema": in_schema},
+                          update_proposal(box, box.with_(label=from_points)) if in_schema else None)
+                )
+                continue
+            if len(obs.points) >= 150:
+                extent = obs.points.max(axis=0) - obs.points.min(axis=0)
+                if best_class_by_size(tuple(extent), candidates)[0] == box.label:
+                    continue  # the object itself looks like its class: a wrong box size is R06 / R10
+        # 2) the box size fits another class much better
         best, _ = best_class_by_size(box.scale, candidates)
         if not best or best == box.label:
             continue
@@ -468,5 +488,58 @@ def r11_class_by_size(ctx: QcContext) -> RuleResult:
     return result
 
 
+GEOMETRIC_RULES = {"R05", "R06", "R09", "R10", "R11"}
+
+
+def _consolidate_proposals(ctx: QcContext, results: list[RuleResult]) -> None:
+    """One consistent correction per object instead of one partial fix per rule."""
+    cfg = ctx.config
+    boxes = _valid(ctx.cuboids)
+    by_uid = {b.uid: b for b in boxes}
+    issues_by_uid = defaultdict(list)
+    for result in results:
+        for issue in result.issues:
+            if issue.rule in GEOMETRIC_RULES:
+                issues_by_uid[issue.uid].append(issue)
+
+    for uid, issues in issues_by_uid.items():
+        box = by_uid.get(uid)
+        if box is None or box.frame not in ctx.point_clouds or box.distance > cfg["fit_max_distance"]:
+            continue
+        points = ctx.point_clouds[box.frame]
+        inside = count_points(points, box, ground_clearance=cfg["ground_clearance"])
+        # search wider only when the box has lost its object
+        margin = 0.4 if inside >= cfg["fit_min_points"] else box.scale[1] + 1.0
+        obs = observe(points, box, boxes, margin=margin)
+        if len(obs.points) < cfg["fit_min_points"]:
+            continue
+        label = None
+        for issue in issues:
+            suggested = issue.evidence.get("suggested")
+            if issue.rule == "R11" and suggested and suggested in cfg["labels"]:
+                label = suggested
+        rules = {issue.rule for issue in issues}
+        gaps = next((i.evidence.get("gaps", {}) for i in issues if i.rule == "R10"), {})
+        shifted = "R05" in rules and inside < cfg["fit_min_points"] or any(
+            i.rule == "R05" and "lệch" in i.message for i in issues
+        )
+        fixed = propose_object_fix(
+            box, obs,
+            label=label,
+            fix_xy=shifted or "length" in gaps or "width" in gaps,
+            fix_height="height" in gaps,
+            fix_ground="R09" in rules,
+        )
+        if fixed is None:
+            continue
+        proposal = update_proposal(box, fixed)
+        if not proposal["changes"]:
+            continue
+        for issue in issues:
+            issue.proposal = proposal
+
+
 def run_rules(ctx: QcContext, codes: list[str] | None = None) -> list[RuleResult]:
-    return [RULES[code](ctx) for code in (codes or sorted(RULES))]
+    results = [RULES[code](ctx) for code in (codes or sorted(RULES))]
+    _consolidate_proposals(ctx, results)
+    return results

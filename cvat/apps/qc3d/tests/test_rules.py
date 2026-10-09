@@ -118,6 +118,27 @@ def test_class_suggestion_and_json_safe_output():
             json.dumps(issue.evidence, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
 
 
+def test_motorbike_labeled_truck_gets_one_full_fix():
+    """Regression: a motorbike labeled Truck with a too wide, floating box (seen on job 23)."""
+    rider = Cuboid(uid="t:18:1", frame=1, label="Rider", position=(5.6, 0.0, 0.75), rotation=(0, 0, 0),
+                   scale=(1.8, 0.8, 1.5), track_id=18, source_kind="track")
+    rng = np.random.default_rng(3)
+    ground = np.column_stack([rng.uniform(2, 10, 1500), rng.uniform(-4, 4, 1500), np.zeros(1500)]).astype(np.float32)
+    cloud = np.concatenate([car_points(rider, 700), ground])
+    wrong = rider.with_(label="Truck", position=(5.6, 0.3, 1.27), scale=(1.87, 1.92, 2.05))
+
+    results = run_rules(QcContext([wrong], {1: cloud}))
+    issues = [i for r in results for i in r.issues]
+    assert any(i.rule == "R11" and i.evidence.get("suggested") == "Rider" for i in issues)
+    proposals = {repr(i.proposal) for i in issues if i.proposal}
+    assert len(proposals) == 1, "one consolidated fix per object"
+    fixed = wrong.with_(**{k: tuple(v) if isinstance(v, list) else v
+                           for k, v in next(i.proposal for i in issues if i.proposal)["changes"].items()})
+    assert fixed.label == "Rider"
+    assert iou_3d(fixed, rider) > 0.6
+    assert abs((fixed.position[2] - fixed.scale[2] / 2) - 0.0) < 0.15  # bottom on the ground
+
+
 def test_injection_recall_on_synthetic_scene():
     boxes = [car(uid=f"s:{i}", x=8.0 + 6 * (i % 5), y=-12.0 + 6 * (i // 5)) for i in range(20)]
     cloud = np.concatenate([car_points(b, 1500, seed=i) for i, b in enumerate(boxes)])
