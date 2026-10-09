@@ -8,7 +8,7 @@ import {
 } from 'react-router-dom';
 import Menu from 'antd/lib/menu';
 
-import DashboardPage from './pages/dashboard';
+import DashboardPage, { ReviewPage } from './pages/dashboard';
 import JobPage from './pages/job-page';
 import AdminPage from './pages/admin';
 import PlannedPage from './pages/planned';
@@ -37,12 +37,7 @@ export default function Qc3dApp(): JSX.Element {
             <Switch>
                 <Route exact path='/qc3d' component={DashboardPage} />
                 <Route exact path='/qc3d/jobs/:jobId' component={JobPage} />
-                <Route exact path='/qc3d/review'>
-                    <PlannedPage
-                        title='Review trước–sau'
-                        description='Hàng đợi issue, viewer 3D box gốc / hiện tại / đề xuất (Sprint 2)'
-                    />
-                </Route>
+                <Route exact path='/qc3d/review' component={ReviewPage} />
                 <Route exact path='/qc3d/qa'>
                     <PlannedPage
                         title='Nghiệm thu QA'

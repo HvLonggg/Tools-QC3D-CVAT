@@ -11,9 +11,9 @@ allow if {
     utils.is_admin
 }
 
-# Data visibility is enforced by the task/job filters inside the view,
-# so any authenticated CVAT user may open the QC 3D summary.
+# Job visibility is enforced by the CVAT job filters inside the views,
+# and QC roles (lead / reviewer / qa) are checked there for run and decision.
 allow if {
-    input.scope == "view:summary"
+    input.scope in {"view:summary", "view:report", "run:qc", "decide:issue"}
     utils.has_perm(utils.WORKER)
 }

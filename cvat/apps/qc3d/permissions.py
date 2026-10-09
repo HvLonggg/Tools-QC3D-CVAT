@@ -12,6 +12,9 @@ from cvat.apps.iam.permissions import OpenPolicyAgentPermission
 class Qc3dPermission(OpenPolicyAgentPermission):
     class Scopes(StrEnum):
         VIEW_SUMMARY = "view:summary"
+        VIEW_REPORT = "view:report"
+        RUN_QC = "run:qc"
+        DECIDE_ISSUE = "decide:issue"
 
     @classmethod
     def create(cls, request, view, obj, iam_context):
@@ -30,6 +33,9 @@ class Qc3dPermission(OpenPolicyAgentPermission):
         return [
             {
                 "summary": Scopes.VIEW_SUMMARY,
+                "report": Scopes.VIEW_REPORT,
+                "run": Scopes.RUN_QC,
+                "decision": Scopes.DECIDE_ISSUE,
             }[view.action]
         ]
 
