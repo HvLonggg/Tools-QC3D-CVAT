@@ -433,6 +433,9 @@ export interface PluginsState {
             userMenu: {
                 items: PluginComponent[];
             };
+            navigation: {
+                items: PluginComponent[];
+            };
         };
         loginPage: {
             loginForm: PluginComponent[];

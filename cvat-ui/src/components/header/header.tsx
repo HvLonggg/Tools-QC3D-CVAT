@@ -289,6 +289,9 @@ function HeaderComponent(props: Props): JSX.Element {
     };
 
     const plugins = usePlugins((state: CombinedState) => state.plugins.components.header.userMenu.items, props);
+    const navigationPlugins = usePlugins(
+        (state: CombinedState) => state.plugins.components.header.navigation.items, props,
+    );
 
     const menuItems: [NonNullable<MenuProps['items']>[0], number][] = [];
     if (user.isStaff) {
@@ -476,6 +479,9 @@ function HeaderComponent(props: Props): JSX.Element {
                 >
                     Models
                 </Button>
+                {navigationPlugins.map(({ component: Component }, index: number) => (
+                    <Component key={index} targetProps={props} />
+                ))}
                 {isAnalyticsPluginActive && user.hasAnalyticsAccess ? (
                     <Button
                         className={getButtonClassName('analytics', false)}

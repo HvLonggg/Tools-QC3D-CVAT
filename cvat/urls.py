@@ -58,3 +58,6 @@ if apps.is_installed("cvat.apps.access_tokens"):
 
 if apps.is_installed("cvat.apps.growth"):
     urlpatterns.append(path("api/", include("cvat.apps.growth.urls")))
+
+if apps.is_installed("cvat.apps.qc3d"):
+    urlpatterns.append(path("api/", include("cvat.apps.qc3d.urls")))

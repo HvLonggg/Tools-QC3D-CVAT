@@ -1,0 +1,30 @@
+# QC 3D AutoFix: local overlay on top of the stock CVAT v2.74.1 deployment.
+#
+# Backend: the qc3d app and the 2 edited files are mounted into cvat_server,
+# so the server image does not need to be rebuilt (image code == repo HEAD).
+# UI: the bundle must be rebuilt because the plugin and the header slot are compiled in.
+# Open CVAT at http://localhost:8070
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.qc3d.yml build cvat_ui
+#   docker compose -f docker-compose.yml -f docker-compose.qc3d.yml up -d
+
+services:
+  cvat_server:
+    volumes:
+      - ./cvat/apps/qc3d:/opt/cvat/cvat/apps/qc3d:ro
+      - ./cvat/settings/base.py:/opt/cvat/cvat/settings/base.py:ro
+      - ./cvat/urls.py:/opt/cvat/cvat/urls.py:ro
+
+  # Port 8080 is taken on this machine by a Windows service (MTAgentService),
+  # so CVAT is published on http://localhost:8070 instead.
+  traefik:
+    ports: !override
+      - 8070:8080
+      - 8090:8090
+
+  cvat_ui:
+    image: cvat/ui:qc3d
+    build:
+      context: .
+      dockerfile: Dockerfile.ui

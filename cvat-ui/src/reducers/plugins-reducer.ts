@@ -55,6 +55,9 @@ const defaultState: PluginsState = {
             userMenu: {
                 items: [],
             },
+            navigation: {
+                items: [],
+            },
         },
         loginPage: {
             loginForm: [],
