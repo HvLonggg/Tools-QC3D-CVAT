@@ -64,6 +64,12 @@ class IssueStatus(models.TextChoices):
     WAIVED = "waived"  # reviewed, label kept as is (reason required)
 
 
+class FixStatus(models.TextChoices):
+    NONE = "none"
+    APPLIED = "applied"  # written to CVAT
+    REVERTED = "reverted"  # CVAT restored to the state before the fix
+
+
 class QcIssue(models.Model):
     run = models.ForeignKey(QcRun, on_delete=models.CASCADE, related_name="issues")
     rule = models.CharField(max_length=8)
@@ -79,6 +85,17 @@ class QcIssue(models.Model):
     )
     decided_date = models.DateTimeField(null=True, blank=True)
     decision_reason = models.TextField(blank=True, default="")
+
+    # proposed correction: {"kind": "update", "changes": {...}, "summary": "..."} | {"kind": "delete", ...}
+    proposal = models.JSONField(null=True, blank=True)
+    # object state when QC ran: {"points": [9 floats], "label": "..."}; guards against stale fixes
+    snapshot = models.JSONField(null=True, blank=True)
+    fix_status = models.CharField(max_length=16, choices=FixStatus.choices, default=FixStatus.NONE)
+    fix_before = models.JSONField(null=True, blank=True)  # full CVAT shape before the fix (for revert)
+    fixed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    fixed_date = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("frame", "rule", "id")

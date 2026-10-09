@@ -16,13 +16,15 @@ from cvat.apps.engine.types import ExtendedRequest
 
 from .models import IssueStatus, QcIssue, QcMembership, QcRole, QcRun
 from .permissions import Qc3dPermission
-from .services import decide_issue, run_job_qc
+from .qc.taxonomy import as_dict as taxonomy_as_dict
+from .services import FixError, apply_fix, decide_issue, revert_fix, run_job_qc
 
 RECENT_JOBS_LIMIT = 50
 
 # who may run QC / decide on issues (CVAT admins always may)
 RUN_ROLES = {QcRole.LEAD, QcRole.REVIEWER, QcRole.QA}
 DECIDE_ROLES = {QcRole.LEAD, QcRole.REVIEWER, QcRole.QA}
+FIX_ROLES = {QcRole.LEAD, QcRole.REVIEWER}
 
 
 def _roles(request: ExtendedRequest) -> tuple[bool, list[str]]:
@@ -61,6 +63,10 @@ def _serialize_issue(issue: QcIssue) -> dict:
         "decided_by": issue.decided_by.username if issue.decided_by else None,
         "decided_date": issue.decided_date,
         "decision_reason": issue.decision_reason,
+        "proposal": issue.proposal,
+        "fix_status": issue.fix_status,
+        "fixed_by": issue.fixed_by.username if issue.fixed_by else None,
+        "fixed_date": issue.fixed_date,
     }
 
 
@@ -167,10 +173,35 @@ class Qc3dViewSet(viewsets.ViewSet):
             raise ValidationError({"reason": "Giữ nguyên nhãn bắt buộc ghi lý do"})
         return Response(_serialize_issue(decide_issue(issue, request.user, new_status, reason)))
 
+    @extend_schema(summary="Write the proposed correction of an issue to CVAT", responses={"200": OpenApiResponse()})
+    @action(detail=False, methods=["POST"], url_path=r"issues/(?P<issue_id>\d+)/fix")
+    def fix(self, request: ExtendedRequest, issue_id: str):
+        return self._fix_action(request, issue_id, apply_fix)
+
+    @extend_schema(summary="Restore the CVAT object as it was before the fix", responses={"200": OpenApiResponse()})
+    @action(detail=False, methods=["POST"], url_path=r"issues/(?P<issue_id>\d+)/revert")
+    def revert(self, request: ExtendedRequest, issue_id: str):
+        return self._fix_action(request, issue_id, revert_fix)
+
+    @extend_schema(summary="Vietnamese traffic class taxonomy and size guideline", responses={"200": OpenApiResponse()})
+    @action(detail=False, methods=["GET"])
+    def taxonomy(self, request: ExtendedRequest):
+        return Response(taxonomy_as_dict())
+
+    def _fix_action(self, request: ExtendedRequest, issue_id: str, operation):
+        _require_role(request, FIX_ROLES)
+        issue = get_object_or_404(QcIssue.objects.select_related("run__job"), id=int(issue_id))
+        _get_job(request, issue.run.job_id)
+        try:
+            issue = operation(issue, request.user)
+        except FixError as e:
+            return Response({"detail": str(e)}, status=e.status_code)
+        return Response(_serialize_issue(issue))
+
     @staticmethod
     def _report(job: Job, run: QcRun | None) -> dict:
         task = job.segment.task
-        issues = list(run.issues.select_related("decided_by")) if run else []
+        issues = list(run.issues.select_related("decided_by", "fixed_by")) if run else []
         return {
             "job": {
                 "id": job.id,

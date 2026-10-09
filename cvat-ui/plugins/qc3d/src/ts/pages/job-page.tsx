@@ -19,7 +19,7 @@ import Tooltip from 'antd/lib/tooltip';
 import notification from 'antd/lib/notification';
 
 import {
-    cvatObjectLink, decideIssue, getReport, IssueStatus, QcIssue, QcReport, runQc, Severity,
+    applyFix, cvatObjectLink, decideIssue, getReport, IssueStatus, QcIssue, QcReport, revertFix, runQc, Severity,
 } from '../api';
 
 const SEVERITY_COLOR: Record<Severity, string> = { blocker: 'red', major: 'orange', minor: 'blue' };
@@ -68,6 +68,24 @@ export default function JobPage(): JSX.Element {
         }
     }, []);
 
+    const onFix = useCallback(async (issue: QcIssue, revert: boolean) => {
+        try {
+            const updated = await (revert ? revertFix(issue.id) : applyFix(issue.id));
+            setReport((prev) => prev && ({
+                ...prev, issues: prev.issues.map((item) => (item.id === updated.id ? updated : item)),
+            }));
+            notification.success({
+                message: revert ? 'Đã hoàn tác trên CVAT' : 'Đã ghi bản sửa vào CVAT',
+                description: issue.proposal?.summary,
+            });
+        } catch (err: any) {
+            notification.error({
+                message: revert ? 'Không hoàn tác được' : 'Không áp dụng được',
+                description: err?.response?.data?.detail ?? err.message,
+            });
+        }
+    }, []);
+
     const issues = useMemo(() => (report?.issues ?? []).filter(
         (issue) => filter === 'all' || issue.status === filter,
     ), [report, filter]);
@@ -89,6 +107,28 @@ export default function JobPage(): JSX.Element {
         { title: 'Class', dataIndex: 'label', width: 100 },
         { title: 'Vấn đề', dataIndex: 'message' },
         {
+            title: 'Đề xuất sửa',
+            width: 260,
+            render: (_: unknown, issue: QcIssue) => {
+                if (!issue.proposal) return <span style={{ color: '#999' }}>—</span>;
+                return (
+                    <Space direction='vertical' size={2}>
+                        <span>{issue.proposal.summary}</span>
+                        {issue.fix_status === 'applied' ? (
+                            <Space size='small'>
+                                <Tag color='green'>{`Đã sửa · ${issue.fixed_by ?? ''}`}</Tag>
+                                <Button size='small' type='link' onClick={() => onFix(issue, true)}>Hoàn tác</Button>
+                            </Space>
+                        ) : (
+                            <Button size='small' type='primary' ghost onClick={() => onFix(issue, false)}>
+                                {issue.fix_status === 'reverted' ? 'Áp dụng lại' : 'Áp dụng vào CVAT'}
+                            </Button>
+                        )}
+                    </Space>
+                );
+            },
+        },
+        {
             title: 'Trạng thái',
             dataIndex: 'status',
             width: 110,
@@ -100,7 +140,7 @@ export default function JobPage(): JSX.Element {
         },
         {
             title: 'Thao tác',
-            width: 300,
+            width: 280,
             render: (_: unknown, issue: QcIssue) => (
                 <Space size='small'>
                     <Link to={cvatObjectLink(report, issue)}>Mở trong CVAT</Link>

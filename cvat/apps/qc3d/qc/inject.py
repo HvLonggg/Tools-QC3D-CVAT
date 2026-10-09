@@ -19,13 +19,20 @@ from .geometry import Cuboid, count_points
 
 # error type -> rules expected to catch it
 EXPECTED_RULES = {
-    "shift": {"R05"},
+    "shift": {"R05", "R10"},
     "oversize": {"R06"},
     "tilt": {"R04"},
     "duplicate": {"R02"},
     "invalid": {"R01"},
     "unknown_label": {"R03"},
+    "loose": {"R10"},
+    "float": {"R09"},
+    "sink": {"R09"},
+    "wrong_class": {"R11"},
 }
+
+# wrong class swaps that a size check can see (VN traffic)
+CLASS_SWAPS = {"Rider": "Pedestrian", "Pedestrian": "Rider", "Car": "Rider"}
 
 
 @dataclass(frozen=True)
@@ -97,5 +104,32 @@ def inject(
         b = boxes[i]
         boxes[i] = b.with_(label="xe_may")
         errors.append(InjectedError(b.uid, "unknown_label", f"{b.label} → xe_may"))
+
+    # loose: grow the box towards the sensor by 0.6-1.0 m (stays inside the class size range)
+    supported = [i for i in all_idx if _eligible_for_shift(boxes[i], point_clouds.get(boxes[i].frame))]
+    for i in pick(supported, per_kind):
+        b = boxes[i]
+        grow = rng.uniform(0.6, 1.0)
+        to_sensor = -np.asarray(b.position[:2]) / max(b.distance, 1e-6)
+        boxes[i] = b.with_(
+            position=(b.position[0] + to_sensor[0] * grow / 2, b.position[1] + to_sensor[1] * grow / 2, b.position[2]),
+            scale=(b.scale[0] + grow * abs(math.cos(b.yaw - math.atan2(to_sensor[1], to_sensor[0]))),
+                   b.scale[1] + grow * abs(math.sin(b.yaw - math.atan2(to_sensor[1], to_sensor[0]))),
+                   b.scale[2]),
+        )
+        errors.append(InjectedError(b.uid, "loose", f"nới {grow:.2f} m về phía cảm biến"))
+
+    for kind, sign in (("float", 1), ("sink", -1)):
+        for i in pick(supported, per_kind):
+            b = boxes[i]
+            dz = rng.uniform(0.5, 1.0) * sign
+            boxes[i] = b.with_(position=(b.position[0], b.position[1], b.position[2] + dz))
+            errors.append(InjectedError(b.uid, kind, f"z {dz:+.2f} m"))
+
+    swappable = [i for i in all_idx if boxes[i].label in CLASS_SWAPS]
+    for i in pick(swappable, per_kind):
+        b = boxes[i]
+        boxes[i] = b.with_(label=CLASS_SWAPS[b.label])
+        errors.append(InjectedError(b.uid, "wrong_class", f"{b.label} → {CLASS_SWAPS[b.label]}"))
 
     return boxes, errors

@@ -94,6 +94,30 @@ def test_geometry_helpers():
     assert count_points(car_points(box), box) == 2000
 
 
+def test_floating_box_gets_ground_proposal():
+    box = car()
+    ground = np.column_stack([
+        np.random.default_rng(1).uniform(5, 15, 400), np.random.default_rng(2).uniform(-3, 3, 400), np.zeros(400),
+    ]).astype(np.float32)
+    floating = box.with_(position=(10.0, 0.0, 1.6))
+    found = issues_by_rule(QcContext([floating], {0: np.concatenate([car_points(box), ground])}))
+    proposal = found["R09"][0].proposal
+    assert abs(proposal["changes"]["position"][2] - 0.8) < 0.1
+
+
+def test_class_suggestion_and_json_safe_output():
+    import json
+
+    truck = car(scale=(8.0, 2.4, 3.1))
+    cloud = car_points(truck)
+    results = run_rules(QcContext([truck], {0: cloud}))
+    r11 = next(r for r in results if r.rule == "R11").issues
+    assert r11 and r11[0].evidence["suggested"] == "Truck"
+    for result in results:
+        for issue in result.issues:
+            json.dumps(issue.evidence, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
+
+
 def test_injection_recall_on_synthetic_scene():
     boxes = [car(uid=f"s:{i}", x=8.0 + 6 * (i % 5), y=-12.0 + 6 * (i // 5)) for i in range(20)]
     cloud = np.concatenate([car_points(b, 1500, seed=i) for i, b in enumerate(boxes)])

@@ -15,6 +15,7 @@ class Qc3dPermission(OpenPolicyAgentPermission):
         VIEW_REPORT = "view:report"
         RUN_QC = "run:qc"
         DECIDE_ISSUE = "decide:issue"
+        FIX_ISSUE = "fix:issue"
 
     @classmethod
     def create(cls, request, view, obj, iam_context):
@@ -36,6 +37,9 @@ class Qc3dPermission(OpenPolicyAgentPermission):
                 "report": Scopes.VIEW_REPORT,
                 "run": Scopes.RUN_QC,
                 "decision": Scopes.DECIDE_ISSUE,
+                "fix": Scopes.FIX_ISSUE,
+                "revert": Scopes.FIX_ISSUE,
+                "taxonomy": Scopes.VIEW_SUMMARY,
             }[view.action]
         ]
 

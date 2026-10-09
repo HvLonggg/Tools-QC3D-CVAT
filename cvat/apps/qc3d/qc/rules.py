@@ -18,20 +18,18 @@ from typing import Callable
 
 import numpy as np
 
+from .fit import describe_change, observe, propose_fit, visible_face_gaps
 from .geometry import Cuboid, count_points, iou_3d, wrap_angle
+from .taxonomy import CLASSES, best_class_by_size, size_log_likelihood
 
-RULES_VERSION = "2026.10.2"
+RULES_VERSION = "2026.10.3"
 
 BLOCKER, MAJOR, MINOR = "blocker", "major", "minor"
 
 DEFAULT_CONFIG = {
-    "labels": ["Car", "Rider", "Pedestrian"],
-    # length, width, height ranges (m) per class; source: PHENIKAA classes, to be confirmed by QA guideline
-    "size_ranges": {
-        "Car": [(2.5, 6.5), (1.4, 2.6), (1.2, 2.6)],
-        "Rider": [(1.0, 2.8), (0.3, 1.3), (1.0, 2.3)],
-        "Pedestrian": [(0.2, 1.4), (0.2, 1.4), (0.8, 2.2)],
-    },
+    "labels": list(CLASSES),
+    # length, width, height ranges (m) per class: from the VN taxonomy (qc/taxonomy.py)
+    "size_ranges": {name: list(zip(s.size_min, s.size_max)) for name, s in CLASSES.items()},
     "track_size_tolerance": 0.15,
     # R02
     "duplicate_center_eps": 0.05,
@@ -41,7 +39,7 @@ DEFAULT_CONFIG = {
     "max_roll_pitch_deg": 15.0,
     # R05: minimum points = max(min_points, base * min(4, (10 / distance)^2))
     "min_points": 3,
-    "points_at_10m": {"Car": 300, "Rider": 100, "Pedestrian": 60},
+    "points_at_10m": {name: s.points_at_10m for name, s in CLASSES.items()},
     "far_distance": 60.0,  # beyond this a low-point warning is minor
     "ground_clearance": 0.2,
     "ring_margin": 0.5,
@@ -50,7 +48,19 @@ DEFAULT_CONFIG = {
     # R07 / R08 (need ego poses)
     "jump_min": 0.5,
     "jump_mad_factor": 6.0,
-    "max_speed": {"Car": 40.0, "Rider": 25.0, "Pedestrian": 4.0},
+    "max_speed": {name: s.max_speed for name, s in CLASSES.items()},
+    # R09 ground contact
+    "ground_tolerance": 0.3,
+    "ground_major": 0.5,
+    # R10 fit: only judged where the LiDAR sees the object well
+    "fit_max_distance": 40.0,
+    "fit_min_points": 60,
+    "face_gap": 0.35,  # gap between a sensor-facing face and the object points
+    "face_gap_ratio": 0.1,
+    "height_gap": 0.4,
+    "height_gap_ratio": 0.25,
+    # R11 class by size
+    "class_margin": 4.0,  # log-likelihood margin of the size prior
 }
 
 
@@ -62,6 +72,18 @@ class Issue:
     frame: int
     message: str
     evidence: dict = field(default_factory=dict)
+    # {"kind": "update", "changes": {...}, "summary": "..."} | {"kind": "delete", "summary": "..."}
+    proposal: dict | None = None
+
+
+def update_proposal(before: Cuboid, after: Cuboid) -> dict:
+    changes = {}
+    for name in ("position", "rotation", "scale"):
+        if getattr(before, name) != getattr(after, name):
+            changes[name] = [round(float(v), 4) for v in getattr(after, name)]
+    if before.label != after.label:
+        changes["label"] = after.label
+    return {"kind": "update", "changes": changes, "summary": describe_change(before, after)}
 
 
 @dataclass
@@ -147,7 +169,8 @@ def r02_duplicates(ctx: QcContext) -> RuleResult:
                 ):
                     result.issues.append(
                         Issue("R02", MAJOR, b.uid, frame, f"Trùng lặp với {a.uid}",
-                              {"duplicate_of": a.uid, "center_distance": round(center, 4)})
+                              {"duplicate_of": a.uid, "center_distance": round(center, 4)},
+                              {"kind": "delete", "summary": f"Xoá bản trùng của {a.uid}"})
                     )
                     continue
                 iou = iou_3d(a, b)
@@ -189,7 +212,8 @@ def r04_orientation(ctx: QcContext) -> RuleResult:
         if not (-math.pi < yaw <= math.pi):
             result.issues.append(
                 Issue("R04", MINOR, box.uid, box.frame, "Góc yaw ngoài (−π, π]",
-                      {"yaw": yaw, "fixed_yaw": wrap_angle(yaw), "autofix": True})
+                      {"yaw": yaw, "fixed_yaw": wrap_angle(yaw), "autofix": True},
+                      update_proposal(box, box.with_(rotation=(roll, pitch, wrap_angle(yaw)))))
             )
     return result
 
@@ -216,14 +240,23 @@ def r05_point_support(ctx: QcContext) -> RuleResult:
 
         if inside < required:
             severity = MINOR if distance > cfg["far_distance"] else MAJOR
+            proposal = None
+            if distance <= cfg["fit_max_distance"]:
+                # the object may sit next to the box: search one box width around it
+                obs = observe(points, box, boxes, margin=box.scale[1] + 1.0)
+                if len(obs.points) >= cfg["fit_min_points"]:
+                    fitted = propose_fit(box, obs)
+                    proposal = update_proposal(box, fitted) if fitted else None
             result.issues.append(
                 Issue("R05", severity, box.uid, box.frame,
-                      f"Ít điểm LiDAR: {inside} < {required:.0f} ở {distance:.0f} m", evidence)
+                      f"Ít điểm LiDAR: {inside} < {required:.0f} ở {distance:.0f} m", evidence, proposal)
             )
         elif ring >= cfg["ring_min_points"] and ring > cfg["ring_ratio"] * inside:
+            fitted = propose_fit(box, observe(points, box, boxes, margin=box.scale[1] + 1.0))
             result.issues.append(
                 Issue("R05", MAJOR, box.uid, box.frame,
-                      f"Box có thể lệch: {ring} điểm sát ngoài so với {inside} điểm bên trong", evidence)
+                      f"Box có thể lệch: {ring} điểm sát ngoài so với {inside} điểm bên trong", evidence,
+                      update_proposal(box, fitted) if fitted else None)
             )
     return result
 
@@ -343,6 +376,95 @@ def r08_track_consistency(ctx: QcContext) -> RuleResult:
                           f"Vận tốc {speed:.1f} m/s vượt ngưỡng {limit:.0f} m/s (nghi đổi ID)",
                           {"speed": round(speed, 2), "limit": limit, "from_frame": a.frame})
                 )
+    return result
+
+
+@rule("R09")
+def r09_ground_contact(ctx: QcContext) -> RuleResult:
+    """Box floating above or sunk into the locally measured ground."""
+    cfg = ctx.config
+    boxes = [b for b in _valid(ctx.cuboids) if b.frame in ctx.point_clouds]
+    if not boxes:
+        return RuleResult("R09", "not_checked", reason="không có point cloud cho frame có nhãn")
+
+    result = RuleResult("R09", "checked")
+    for box in boxes:
+        obs = observe(ctx.point_clouds[box.frame], box, boxes)
+        if obs.ground_z is None:
+            continue
+        gap = (box.position[2] - box.scale[2] / 2) - obs.ground_z
+        if abs(gap) <= cfg["ground_tolerance"]:
+            continue
+        fixed = box.with_(position=(box.position[0], box.position[1], obs.ground_z + box.scale[2] / 2))
+        result.issues.append(
+            Issue("R09", MAJOR if abs(gap) > cfg["ground_major"] else MINOR, box.uid, box.frame,
+                  f"Box {'lơ lửng' if gap > 0 else 'chìm'} {abs(gap):.2f} m so với mặt đường",
+                  {"bottom_minus_ground": round(gap, 3), "ground_z": round(obs.ground_z, 3)},
+                  update_proposal(box, fixed))
+        )
+    return result
+
+
+@rule("R10")
+def r10_box_fit(ctx: QcContext) -> RuleResult:
+    """Box not tight on the faces the LiDAR sees (too loose / shifted) or taller than the object."""
+    cfg = ctx.config
+    boxes = [b for b in _valid(ctx.cuboids) if b.frame in ctx.point_clouds]
+    if not boxes:
+        return RuleResult("R10", "not_checked", reason="không có point cloud cho frame có nhãn")
+
+    result = RuleResult("R10", "checked")
+    for box in boxes:
+        if box.distance > cfg["fit_max_distance"]:
+            continue
+        obs = observe(ctx.point_clouds[box.frame], box, boxes)
+        if len(obs.points) < cfg["fit_min_points"]:
+            continue
+        gaps = visible_face_gaps(obs, box)
+        loose = {}
+        for name, axis in (("length", 0), ("width", 1)):
+            if name in gaps and gaps[name] > max(cfg["face_gap"], cfg["face_gap_ratio"] * box.scale[axis]):
+                loose[name] = round(gaps[name], 2)
+        if gaps.get("height", 0) > max(cfg["height_gap"], cfg["height_gap_ratio"] * box.scale[2]):
+            loose["height"] = round(gaps["height"], 2)
+        if not loose:
+            continue
+        fitted = propose_fit(box, obs, shrink=True)
+        names = {"length": "dài", "width": "rộng", "height": "cao"}
+        result.issues.append(
+            Issue("R10", MAJOR, box.uid, box.frame,
+                  "Box không ôm sát vật: hở " + ", ".join(f"{names[k]} {v:.2f} m" for k, v in loose.items()),
+                  {"gaps": loose, "points": len(obs.points)},
+                  update_proposal(box, fitted) if fitted else None)
+        )
+    return result
+
+
+@rule("R11")
+def r11_class_by_size(ctx: QcContext) -> RuleResult:
+    """Class that does not match the box size under the VN class priors."""
+    cfg = ctx.config
+    candidates = [name for name in CLASSES]
+    result = RuleResult("R11", "checked")
+    for box in _valid(ctx.cuboids):
+        if box.label not in CLASSES:
+            continue
+        best, _ = best_class_by_size(box.scale, candidates)
+        if not best or best == box.label:
+            continue
+        # how much better the best class explains the size than the current one
+        margin = size_log_likelihood(CLASSES[best], box.scale) - size_log_likelihood(CLASSES[box.label], box.scale)
+        if margin < cfg["class_margin"]:
+            continue
+        in_schema = best in cfg["labels"]
+        result.issues.append(
+            Issue("R11", MAJOR, box.uid, box.frame,
+                  f"Nghi sai class: kích thước giống {best} hơn {box.label}"
+                  + ("" if in_schema else f" (schema chưa có class {best})"),
+                  {"suggested": best, "margin": round(margin, 1), "scale": list(box.scale),
+                   "in_schema": in_schema},
+                  update_proposal(box, box.with_(label=best)) if in_schema else None)
+        )
     return result
 
 

@@ -42,6 +42,21 @@ export interface QcIssue {
     decided_by: string | null;
     decided_date: string | null;
     decision_reason: string;
+    proposal: { kind: 'update' | 'delete'; summary: string; changes?: Record<string, unknown> } | null;
+    fix_status: 'none' | 'applied' | 'reverted';
+    fixed_by: string | null;
+    fixed_date: string | null;
+}
+
+export interface TaxonomyClass {
+    name: string;
+    name_vi: string;
+    description: string;
+    size_min: [number, number, number];
+    size_max: [number, number, number];
+    size_mean: [number, number, number];
+    points_at_10m: number;
+    max_speed: number;
 }
 
 export interface QcCoverage {
@@ -94,6 +109,10 @@ export const runQc = (jobId: number): Promise<QcReport> => request(`jobs/${jobId
 export const decideIssue = (issueId: number, status: IssueStatus, reason = ''): Promise<QcIssue> => (
     request(`issues/${issueId}/decision`, 'POST', { status, reason })
 );
+
+export const applyFix = (issueId: number): Promise<QcIssue> => request(`issues/${issueId}/fix`, 'POST');
+export const revertFix = (issueId: number): Promise<QcIssue> => request(`issues/${issueId}/revert`, 'POST');
+export const getTaxonomy = (): Promise<{ version: string; classes: TaxonomyClass[] }> => request('taxonomy');
 
 export function cvatObjectLink(report: QcReport, issue: QcIssue): string {
     // uid: "s:<shape id>" or "t:<track id>:<frame>"
