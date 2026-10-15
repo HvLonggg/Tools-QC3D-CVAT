@@ -207,6 +207,7 @@ export interface ViewerSettings {
     pointFocus: boolean;
     depthShading: boolean;
     roundPoints: boolean;
+    guides: boolean; // distance rings 10/20/30 m and ground grid
 }
 
 export const DEFAULT_VIEWER: ViewerSettings = {
@@ -217,6 +218,7 @@ export const DEFAULT_VIEWER: ViewerSettings = {
     pointFocus: false,
     depthShading: false,
     roundPoints: true,
+    guides: false,
 };
 
 const VIEWER_KEY = 'qc3d.viewer';
@@ -236,6 +238,7 @@ export function loadViewer(): ViewerSettings {
             pointFocus: saved?.pointFocus === true,
             depthShading: typeof saved?.depthShading === 'boolean' ? saved.depthShading : DEFAULT_VIEWER.depthShading,
             roundPoints: typeof saved?.roundPoints === 'boolean' ? saved.roundPoints : DEFAULT_VIEWER.roundPoints,
+            guides: typeof saved?.guides === 'boolean' ? saved.guides : DEFAULT_VIEWER.guides,
         };
     } catch {
         return DEFAULT_VIEWER;
@@ -256,6 +259,7 @@ export function applyViewer(store: AppStore, viewer: ViewerSettings): void {
         pointFocus: viewer.pointFocus,
         pointDepthShading: viewer.depthShading,
         pointRound: viewer.roundPoints,
+        sceneGuides: viewer.guides,
     });
     const filter = `brightness(${viewer.brightness}%) contrast(${viewer.contrast}%)`;
     for (const element of Object.values(canvas.html() as Record<string, HTMLElement>)) {

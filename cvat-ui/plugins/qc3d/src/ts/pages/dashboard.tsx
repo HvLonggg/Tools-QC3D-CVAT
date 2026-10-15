@@ -19,7 +19,7 @@ import Table from 'antd/lib/table';
 import Tag from 'antd/lib/tag';
 
 import { Qc3dJob } from '../api';
-import QcAnalyticsPanel from './analytics';
+import QcAnalyticsPanel, { WorkflowFunnel } from './analytics';
 import useSummary from '../use-summary';
 
 const STAGES = [
@@ -185,44 +185,6 @@ function JobsTable({ jobs, review = false }: { jobs: Qc3dJob[]; review?: boolean
     );
 }
 
-export function ReviewPage(): JSX.Element {
-    const {
-        summary, error, loading, refresh,
-    } = useSummary();
-
-    if (loading && !summary) {
-        return (
-            <div className='qc3d-loading-state' role='status'>
-                <Spin size='large' /><span>Đang tải hàng đợi review…</span>
-            </div>
-        );
-    }
-    if (!summary) {
-        return (
-            <Alert type='error' showIcon message='Không tải được hàng đợi review' description={error}
-                action={<Button onClick={refresh} loading={loading}>Thử lại</Button>}
-            />
-        );
-    }
-
-    const queue = summary.recent_jobs
-        .filter((job) => job.open_issues === null || job.open_issues > 0)
-        .sort((a, b) => (b.open_issues ?? -1) - (a.open_issues ?? -1));
-
-    return (
-        <div className='qc3d-dashboard'>
-            <div className='qc3d-page-header'>
-                <div><h2>Hàng đợi review</h2><p>Kiểm tra các job gần đây còn lỗi mở hoặc chưa chạy QC.</p></div>
-                <Button icon={<ReloadOutlined />} onClick={refresh} loading={loading}>Làm mới</Button>
-            </div>
-            {error && <Alert type='warning' showIcon message='Chưa cập nhật được dữ liệu' description={error} />}
-            <Card className='qc3d-table-card' title={`Cần xem xét · ${queue.length} job`}>
-                <JobsTable jobs={queue} review />
-            </Card>
-        </div>
-    );
-}
-
 export default function DashboardPage(): JSX.Element {
     const {
         summary, error, loading, refresh,
@@ -302,6 +264,7 @@ export default function DashboardPage(): JSX.Element {
                 </div>
                 <Link to='/qc3d/guidelines'>Quản lý guideline <ArrowRightOutlined /></Link>
             </div>
+            <WorkflowFunnel />
             <QcAnalyticsPanel />
             <Card title='Job 3D cập nhật gần nhất' className='cvat-qc3d-recent-jobs qc3d-table-card'>
                 <JobsTable jobs={summary.recent_jobs} />

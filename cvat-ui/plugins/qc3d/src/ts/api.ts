@@ -87,6 +87,8 @@ export interface GuidelineContent {
     rules: Record<string, boolean>;
     // what autofix may change under this guideline (absent: everything, no class excluded)
     autofix?: GuidelineAutofix;
+    // job acceptance by QA (absent keys: server defaults, doc/qc3d/12-nghiem-thu-api.md)
+    acceptance?: Partial<AcceptanceCriteria>;
     notes: string;
 }
 
@@ -514,4 +516,143 @@ export function cvatObjectLink(report: QcReport, issue: QcIssue): string {
     const { task_id: taskId, id: jobId } = report.job;
     return `/tasks/${taskId}/jobs/${jobId}?frame=${issue.frame}&qcFrame=${issue.frame}` +
         `&qcFocus=${encodeURIComponent(issue.uid)}`;
+}
+
+// ------------------------------------------------------------------ review / acceptance workflow (doc/qc3d/12)
+
+export type WorkflowStatus =
+    'in_progress' | 'returned' | 'waiting_review' | 'in_review' | 'waiting_acceptance' | 'in_acceptance' |
+    'accepted' | 'signed_off';
+export type WorkflowActionName =
+    'submit' | 'start_review' | 'review_pass' | 'review_return' | 'start_acceptance' | 'accept' | 'reject' |
+    'sign_off' | 'reopen';
+
+export interface UserRef { id: number; username: string }
+export interface SeverityCounts { blocker: number; major: number; minor: number }
+
+export interface WorkflowAction {
+    action: WorkflowActionName;
+    label: string;
+    enabled: boolean;
+    reason: string;
+    note_required: boolean;
+    needs_override: boolean;
+}
+
+export interface WorkflowEvent {
+    id: number;
+    action: WorkflowActionName;
+    label: string;
+    from_status: WorkflowStatus;
+    to_status: WorkflowStatus;
+    user: UserRef | null;
+    date: string;
+    note: string;
+    metrics: {
+        run_id?: number | null;
+        open?: SeverityCounts;
+        fixed?: number;
+        waived?: number;
+        override?: boolean;
+        acceptance?: {
+            id: number; frames?: number[]; round?: number; checked_frames?: number; boxes_checked?: number;
+            errors?: number; error_rate?: number | null; passes?: boolean | null;
+        };
+    };
+}
+
+export interface AcceptanceCriteria {
+    sample_ratio: number;
+    min_frames: number;
+    max_error_rate: number;
+    max_open_blockers: number;
+}
+
+export interface FrameResult { boxes_checked: number; errors: number; note: string; by?: string; date?: string }
+
+export interface Acceptance {
+    id: number;
+    round: number;
+    seed: number;
+    closed: boolean;
+    frames: number[];
+    results: Record<string, FrameResult>;
+    checked_frames: number;
+    boxes_checked: number;
+    errors: number;
+    error_rate: number | null;
+    passes: boolean | null;
+    open_blockers: number;
+}
+
+export interface WorkflowState {
+    job: {
+        id: number; task_id: number; task_name: string; frames: number; start_frame: number; assignee: UserRef | null;
+    };
+    status: WorkflowStatus;
+    status_text: string;
+    stage: string;
+    state: string;
+    criteria: AcceptanceCriteria;
+    qc: {
+        run_id: number | null; run_date: string | null; whole_job: boolean; stale_reason: string | null;
+        open: SeverityCounts; fixed: number; waived: number; total: number;
+    };
+    acceptance: Acceptance | null;
+    actions: WorkflowAction[];
+    history: WorkflowEvent[];
+}
+
+export interface BoardJob {
+    id: number;
+    task_id: number;
+    task_name: string;
+    frames: number;
+    status: WorkflowStatus;
+    status_text: string;
+    assignee: UserRef | null;
+    qc_open: SeverityCounts | null;
+    error_rate: number | null;
+    last_action: { action: WorkflowActionName; user: string | null; date: string } | null;
+    updated_date: string;
+}
+
+export interface WorkflowBoard {
+    columns: { status: WorkflowStatus; text: string; count: number }[];
+    jobs: BoardJob[];
+}
+
+export interface OverviewMap {
+    method: 'estimated';
+    extent: [number, number, number, number];
+    trajectory: { frame: number; x: number; y: number; yaw: number }[];
+    objects: { frame: number; x: number; y: number; label: string }[];
+    issues: {
+        issue_id: number; uid: string; frame: number; rule: string; severity: Severity; label: string;
+        status: IssueStatus; fix_status: 'none' | 'applied' | 'reverted'; x: number; y: number;
+    }[];
+    task_id: number;
+    run_id: number | null;
+}
+
+export const getWorkflow = (jobId: number): Promise<WorkflowState> => request(`jobs/${jobId}/workflow`);
+export const actWorkflow = (
+    jobId: number, action: WorkflowActionName, note = '', override = false,
+): Promise<WorkflowState> => request(`jobs/${jobId}/workflow`, 'POST', { action, note, override });
+export const recordAcceptanceFrame = (
+    jobId: number, frame: number, result: { boxes_checked: number; errors: number; note: string },
+): Promise<WorkflowState> => request(`jobs/${jobId}/acceptance/frames/${frame}`, 'PUT', result);
+export const getBoard = (params: {
+    status?: WorkflowStatus; task?: number; assignee?: number; search?: string;
+} = {}): Promise<WorkflowBoard> => {
+    const query = Object.entries(params).filter(([, value]) => value !== undefined && value !== '')
+        .map(([key, value]) => `${key}=${encodeURIComponent(String(value))}`).join('&');
+    return request(`workflow/board${query ? `?${query}` : ''}`);
+};
+export const getOverview = (jobId: number): Promise<OverviewMap> => request(`jobs/${jobId}/overview`);
+
+/** Annotation view of a job, on a frame, focused on one object when `uid` is given. */
+export function annotationLink(taskId: number, jobId: number, frame: number, uid?: string): string {
+    return `/tasks/${taskId}/jobs/${jobId}?frame=${frame}` +
+        (uid ? `&qcFrame=${frame}&qcFocus=${encodeURIComponent(uid)}` : '');
 }

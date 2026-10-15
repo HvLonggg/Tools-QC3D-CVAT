@@ -86,6 +86,8 @@ export interface Configuration {
     pointFocus: boolean;
     pointDepthShading: boolean;
     pointRound: boolean;
+    // distance rings (10 / 20 / 30 m) and a 5 m ground grid around the sensor, on the road
+    sceneGuides: boolean;
     qcMarkers: QCMarker[];
 }
 
@@ -229,6 +231,7 @@ export class Canvas3dModelImpl extends MasterImpl implements Canvas3dModel {
                 pointFocus: false,
                 pointDepthShading: false,
                 pointRound: false,
+                sceneGuides: false,
                 qcMarkers: [],
             },
             isFrameUpdating: false,
@@ -478,6 +481,9 @@ export class Canvas3dModelImpl extends MasterImpl implements Canvas3dModel {
         }
         if (typeof configuration.pointRound === 'boolean') {
             this.data.configuration.pointRound = configuration.pointRound;
+        }
+        if (typeof configuration.sceneGuides === 'boolean') {
+            this.data.configuration.sceneGuides = configuration.sceneGuides;
         }
         if (Array.isArray(configuration.qcMarkers)) {
             this.data.configuration.qcMarkers = configuration.qcMarkers.filter((marker) => (

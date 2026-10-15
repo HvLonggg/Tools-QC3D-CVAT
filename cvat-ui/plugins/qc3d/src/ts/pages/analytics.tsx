@@ -24,8 +24,9 @@ import Tag from 'antd/lib/tag';
 import Tooltip from 'antd/lib/tooltip';
 
 import {
-    errorText, getAnalytics, QcAnalytics, QualityRating,
+    errorText, getAnalytics, getBoard, QcAnalytics, QualityRating, WorkflowBoard,
 } from '../api';
+import { STATUS_META } from '../workflow-ui';
 
 ChartJS.register(
     ArcElement, BarElement, CategoryScale, Filler, Legend, LinearScale, LineElement, PointElement, ChartTooltip,
@@ -512,5 +513,67 @@ export default function QcAnalyticsPanel(): JSX.Element {
                 </Row>
             )}
         </div>
+    );
+}
+
+
+/** Jobs at each step of the review / acceptance workflow (dashboard). */
+export function WorkflowFunnel(): JSX.Element {
+    const [board, setBoard] = useState<WorkflowBoard | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    useEffect(() => {
+        getBoard().then(setBoard).catch((err) => setError(errorText(err)));
+    }, []);
+    if (error) return <Alert type='warning' showIcon message='Chưa tải được quy trình job' description={error} />;
+    if (!board) return <Card className='qc3d-chart-card'><Spin /></Card>;
+
+    const count = (status: string): number => board.columns.find((c) => c.status === status)?.count ?? 0;
+    const total = board.jobs.length;
+    const done = count('accepted') + count('signed_off');
+    const returned = count('returned');
+    const waiting = count('waiting_review') + count('waiting_acceptance');
+    const finished = done + returned;
+    const options = baseOptions<'bar'>({
+        indexAxis: 'y',
+        scales: {
+            x: { beginAtZero: true, ticks: { precision: 0, color: TEXT.secondary, font: FONT }, grid: { color: TEXT.grid } },
+            y: { ticks: { color: TEXT.primary, font: FONT }, grid: { display: false } },
+        },
+        plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: (item) => ` ${item.parsed.x} job` } },
+        },
+    } as ChartOptions<'bar'>);
+    return (
+        <Card
+            className='qc3d-chart-card qc3d-funnel-card'
+            title={<div><div>Quy trình duyệt và nghiệm thu</div><small>Số job 3D ở từng bước · bấm Trạng thái job để xem chi tiết</small></div>}
+            extra={<Link to='/qc3d/board'>Trạng thái job</Link>}
+        >
+            <div className='qc3d-funnel'>
+                <div className='qc3d-funnel-kpis'>
+                    <Kpi label='Job trong quy trình' value={total} accent='#315be8' caption='Job 3D bạn xem được' />
+                    <Kpi label='Đang chờ' value={waiting} accent='#a86400' caption='Chờ QC hoặc chờ nghiệm thu' />
+                    <Kpi label='Đạt / đã chốt' value={done} accent='#16803c' caption={finished ? `Tỷ lệ đạt ${percent(done / finished, 0)}` : 'Chưa có kết luận'} />
+                    <Kpi label='Bị trả lại' value={returned} accent='#d9384a' caption='Cần người gán nhãn sửa' />
+                </div>
+                <div className='qc3d-funnel-chart'>
+                    {total ? (
+                        <Bar
+                            options={options}
+                            data={{
+                                labels: board.columns.map((c) => c.text),
+                                datasets: [{
+                                    data: board.columns.map((c) => c.count),
+                                    backgroundColor: board.columns.map((c) => STATUS_META[c.status].color),
+                                    borderRadius: 6,
+                                    barThickness: 16,
+                                }],
+                            }}
+                        />
+                    ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description='Chưa có job 3D' />}
+                </div>
+            </div>
+        </Card>
     );
 }

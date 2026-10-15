@@ -140,6 +140,7 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
     private statesToBeMerged: ObjectState[];
     private sceneBBox: THREE.Box3;
     private perspectiveCloud: THREE.Points | null = null;
+    private sceneGuides: THREE.Group | null = null;
     private sourceColors: Float32Array | null = null;
     private appliedPointSignature = '';
     private focusedPointCount: number | null = null;
@@ -1557,6 +1558,7 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
             });
             this.applyPointStyle();
             this.applyQcColors();
+            this.applySceneGuides();
         } else if (reason === UpdateReasons.SHAPE_ACTIVATED) {
             this.deactivateObject();
             this.activateObject();
@@ -1976,6 +1978,92 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         }
     }
 
+    /** Road height near the sensor: 10th percentile of the points 3-20 m away (horizontally). */
+    private static roadLevel(xyz: ArrayLike<number>, count: number): number {
+        const heights: number[] = [];
+        const step = Math.max(1, Math.floor(count / 60000));
+        for (let i = 0; i < count; i += step) {
+            const x = xyz[i * 3];
+            const y = xyz[i * 3 + 1];
+            const z = xyz[i * 3 + 2];
+            const r = Math.hypot(x, y);
+            if (r > 3 && r < 20 && Number.isFinite(z)) heights.push(z);
+        }
+        if (heights.length < 50) return 0;
+        heights.sort((a, b) => a - b);
+        return heights[Math.floor(heights.length * 0.1)];
+    }
+
+    private static textSprite(text: string): THREE.Sprite {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 48;
+        const context = canvas.getContext('2d');
+        if (context) {
+            context.font = '600 28px system-ui, sans-serif';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.lineWidth = 6;
+            context.strokeStyle = 'rgba(8, 16, 30, 0.85)';
+            context.strokeText(text, 64, 24);
+            context.fillStyle = '#9fe7ff';
+            context.fillText(text, 64, 24);
+        }
+        const material = new THREE.SpriteMaterial({
+            map: new THREE.CanvasTexture(canvas), depthTest: false, transparent: true,
+        });
+        const sprite = new THREE.Sprite(material);
+        sprite.scale.set(2.4, 0.9, 1);
+        return sprite;
+    }
+
+    /** Distance rings and ground grid for the cloud just loaded (shown when sceneGuides is on). */
+    private buildSceneGuides(cloud: THREE.Points): void {
+        if (this.sceneGuides) {
+            this.views.perspective.scene.remove(this.sceneGuides);
+            this.sceneGuides.traverse((node) => {
+                const item = node as THREE.Mesh;
+                item.geometry?.dispose();
+                const material = item.material as THREE.Material | undefined;
+                (material as THREE.SpriteMaterial | undefined)?.map?.dispose();
+                material?.dispose();
+            });
+        }
+        const position = (cloud.geometry as THREE.BufferGeometry).getAttribute('position');
+        const level = position ? Canvas3dViewImpl.roadLevel(position.array, position.count) : 0;
+        const group = new THREE.Group();
+        group.name = 'qc3dSceneGuides';
+        const grid = new THREE.GridHelper(80, 16, 0x2b4a6b, 0x1c2f45);
+        grid.rotation.x = Math.PI / 2;
+        (grid.material as THREE.Material).transparent = true;
+        (grid.material as THREE.Material).opacity = 0.55;
+        group.add(grid);
+        for (const radius of [10, 20, 30]) {
+            const points: THREE.Vector3[] = [];
+            for (let i = 0; i <= 128; i++) {
+                const angle = (i / 128) * Math.PI * 2;
+                points.push(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0));
+            }
+            const ring = new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(points),
+                new THREE.LineBasicMaterial({ color: 0x4fc3f7, transparent: true, opacity: 0.75 }),
+            );
+            group.add(ring);
+            const label = Canvas3dViewImpl.textSprite(`${radius} m`);
+            label.position.set(radius * Math.SQRT1_2, -radius * Math.SQRT1_2, 0.3);
+            group.add(label);
+        }
+        group.position.set(0, 0, level + 0.03);
+        group.renderOrder = -1;
+        this.sceneGuides = group;
+        this.views.perspective.scene.add(group);
+        this.applySceneGuides();
+    }
+
+    private applySceneGuides(): void {
+        if (this.sceneGuides) this.sceneGuides.visible = this.model.data.configuration.sceneGuides;
+    }
+
     /**
      * Height of each point above the local ground. Ground per 2 m cell = 5th percentile of its z; a cell
      * covered by an object (roof points only) takes the lowest ground of the cells within 4 m.
@@ -2204,6 +2292,7 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         this.sourceColors = sourceColor ? sourceColor.array as Float32Array : null;
         this.appliedPointSignature = '';
         this.applyPointStyle();
+        this.buildSceneGuides(perspectiveCloud);
 
         const origin = new THREE.Vector3(0, 0, 0);
         const isOriginInScene = this.sceneBBox.containsPoint(origin);

@@ -26,9 +26,14 @@ import Tooltip from 'antd/lib/tooltip';
 import notification from 'antd/lib/notification';
 
 import {
-    applyFix, cvatObjectLink, decideIssue, errorText, getJobGuideline, getJobSettings, getReport, IssueStatus,
-    JobGuideline, JobQcSettings, QcIssue, QcReport, revertFix, runQc, Severity,
+    applyFix, cvatObjectLink, decideIssue, errorText, getJobGuideline, getJobSettings, getOverview, getReport,
+    getWorkflow, IssueStatus, JobGuideline, JobQcSettings, OverviewMap as MapData, QcIssue, QcReport, revertFix, runQc,
+    Severity, WorkflowState,
 } from '../api';
+import OverviewMap from '../overview-map';
+import {
+    StatusBadge, WorkflowActions, WorkflowHistory, WorkflowSteps,
+} from '../workflow-ui';
 
 const range = (lo: number, hi: number): string => `${lo}–${hi}`;
 
@@ -122,8 +127,22 @@ export default function JobPage(): JSX.Element {
     const [pending, setPending] = useState<number[]>([]);
     const [search, setSearch] = useState('');
     const [severityFilter, setSeverityFilter] = useState<Severity | undefined>(undefined);
+    const [workflow, setWorkflow] = useState<WorkflowState | null>(null);
+    const [overview, setOverview] = useState<MapData | null>(null);
+    const [overviewError, setOverviewError] = useState<string | null>(null);
     const activeJobId = useRef(jobId);
     activeJobId.current = jobId;
+
+    const loadWorkflow = useCallback(() => {
+        getWorkflow(+jobId).then((next) => {
+            if (activeJobId.current === jobId) setWorkflow(next);
+        }).catch(() => { if (activeJobId.current === jobId) setWorkflow(null); });
+        getOverview(+jobId).then((next) => {
+            if (activeJobId.current !== jobId) return;
+            setOverview(next);
+            setOverviewError(null);
+        }).catch((err) => { if (activeJobId.current === jobId) setOverviewError(errorText(err)); });
+    }, [jobId]);
 
     const loadGuideline = useCallback(() => {
         getJobGuideline(+jobId).then((nextGuideline) => {
@@ -156,9 +175,12 @@ export default function JobPage(): JSX.Element {
         setPending([]);
         setWaiving(null);
         setRunning(false);
+        setWorkflow(null);
+        setOverview(null);
         load();
         loadGuideline();
-    }, [load, loadGuideline]);
+        loadWorkflow();
+    }, [load, loadGuideline, loadWorkflow]);
 
     const onRun = useCallback(async () => {
         setRunning(true);
@@ -167,6 +189,7 @@ export default function JobPage(): JSX.Element {
             if (activeJobId.current !== jobId) return;
             setReport(result);
             loadGuideline();
+            loadWorkflow();
             notification.success({
                 message: `QC xong: ${result.issues.length} vấn đề`,
                 description: `${result.run?.objects_count} đối tượng, ${result.run?.duration_ms} ms`,
@@ -357,6 +380,36 @@ export default function JobPage(): JSX.Element {
                     )}
                 </Space>
             </div>
+            {workflow && (
+                <Card className='qc3d-workflow-card'>
+                    <div className='qc3d-workflow-top'>
+                        <div className='qc3d-workflow-who'>
+                            <StatusBadge status={workflow.status} />
+                            <span>{`Người phụ trách: ${workflow.job.assignee?.username ?? 'chưa phân công'}`}</span>
+                            <span>{`${workflow.job.frames} frame`}</span>
+                        </div>
+                        <WorkflowActions
+                            jobId={workflow.job.id}
+                            actions={workflow.actions}
+                            onDone={(next) => { setWorkflow(next); load(); }}
+                        />
+                    </div>
+                    <WorkflowSteps status={workflow.status} />
+                    {['waiting_review', 'in_review'].includes(workflow.status) && workflow.qc.stale_reason && (
+                        <Alert type='warning' showIcon message={`QC chưa sẵn sàng để duyệt: ${workflow.qc.stale_reason}. Bấm Chạy lại QC.`} />
+                    )}
+                    {['waiting_acceptance', 'in_acceptance'].includes(workflow.status) && (
+                        <Alert
+                            type='info'
+                            showIcon
+                            message={workflow.acceptance && !workflow.acceptance.closed ?
+                                `Nghiệm thu: đã chấm ${workflow.acceptance.checked_frames}/${workflow.acceptance.frames.length} frame mẫu` :
+                                'Job chờ QA lấy mẫu nghiệm thu'}
+                            action={<Link to={`/qc3d/qa?job=${workflow.job.id}`}>Mở trang nghiệm thu</Link>}
+                        />
+                    )}
+                </Card>
+            )}
             <div className='qc3d-job-metrics'>
                 <div><span>Đối tượng đã kiểm tra</span><strong>{report.run?.objects_count ?? '—'}</strong><small>{`Frame ${report.job.start_frame}–${report.job.stop_frame}`}</small></div>
                 <div className='qc3d-job-metric-open'><span>Vấn đề cần duyệt</span><strong>{report.run ? counts('open') : '—'}</strong><small>Ưu tiên kiểm tra và xác nhận</small></div>
@@ -391,6 +444,15 @@ export default function JobPage(): JSX.Element {
                         ))}
                     </Space>
                 )}
+            </Card>
+            <Card
+                title='Bản đồ tổng quan job'
+                className='qc3d-map-card'
+                extra={<span className='qc3d-cell-secondary'>Toàn bộ frame trên một bản đồ</span>}
+            >
+                {overview && <OverviewMap data={overview} jobId={+jobId} />}
+                {!overview && !overviewError && <div className='qc3d-map-loading'><Spin tip='Đang dựng bản đồ…' /></div>}
+                {overviewError && <Alert type='error' showIcon message='Không dựng được bản đồ' description={overviewError} />}
             </Card>
             {guideline && <GuidelineCard guideline={guideline} />}
             {report.run && (
@@ -444,6 +506,11 @@ export default function JobPage(): JSX.Element {
                             showTotal: (total) => `${total} vấn đề`,
                         }}
                     />
+                </Card>
+            )}
+            {workflow && (
+                <Card title='Lịch sử quy trình' className='qc3d-history-card'>
+                    <WorkflowHistory events={workflow.history} />
                 </Card>
             )}
             <Modal

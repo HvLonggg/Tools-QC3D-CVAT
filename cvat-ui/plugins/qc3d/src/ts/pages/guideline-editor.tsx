@@ -30,7 +30,8 @@ import Upload from 'antd/lib/upload';
 import notification from 'antd/lib/notification';
 
 import {
-    compileGuideline, createGuideline, deleteGuideline, errorText, getGuideline, getGuidelines, GuidelineAutofix,
+    AcceptanceCriteria, compileGuideline, createGuideline, deleteGuideline, errorText, getGuideline, getGuidelines,
+    GuidelineAutofix,
     GuidelineClass, GuidelineContent, GuidelineInput, GuidelineList, ParsedGuideline, updateGuideline,
 } from '../api';
 import { IMPORT_ACCEPT, importGuidelineFile } from './guidelines';
@@ -107,6 +108,10 @@ function parseContent(text: string): GuidelineContent {
     }
     if (rules.R01 === false) throw new Error('Không được tắt R01 (nhãn không hợp lệ).');
     if (parsed.notes !== undefined && typeof parsed.notes !== 'string') throw new Error('notes phải là chuỗi.');
+    const acceptance = parsed.acceptance ?? {};
+    if (!isRecord(acceptance) || Object.values(acceptance).some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
+        throw new Error('acceptance phải là object chứa các giá trị số hữu hạn.');
+    }
     let autofix: GuidelineAutofix | undefined;
     if (parsed.autofix !== undefined) {
         const raw = parsed.autofix;
@@ -127,9 +132,20 @@ function parseContent(text: string): GuidelineContent {
         thresholds: thresholds as Record<string, number>,
         rules: rules as Record<string, boolean>,
         ...(autofix ? { autofix } : {}),
+        ...(Object.keys(acceptance).length ? { acceptance: acceptance as Partial<AcceptanceCriteria> } : {}),
         notes: typeof parsed.notes === 'string' ? parsed.notes : '',
     };
 }
+
+// job acceptance by QA: key, label, unit, server limits (qc/guideline.py ACCEPTANCE_LIMITS), default
+const ACCEPTANCE_FIELDS: {
+    key: keyof AcceptanceCriteria; label: string; percent: boolean; min: number; max: number; fallback: number; hint: string;
+}[] = [
+    { key: 'sample_ratio', label: 'Tỷ lệ frame lấy mẫu', percent: true, min: 1, max: 100, fallback: 10, hint: 'Phần trăm số frame của job QA chấm' },
+    { key: 'min_frames', label: 'Số frame mẫu tối thiểu', percent: false, min: 1, max: 1000, fallback: 5, hint: 'Job ngắn vẫn chấm ít nhất chừng này frame' },
+    { key: 'max_error_rate', label: 'Tỷ lệ box lỗi tối đa', percent: true, min: 0, max: 100, fallback: 2, hint: 'Box lỗi / box đã kiểm trên các frame mẫu' },
+    { key: 'max_open_blockers', label: 'Lỗi nghiêm trọng còn mở tối đa', percent: false, min: 0, max: 1000, fallback: 0, hint: 'Lỗi QC mức nghiêm trọng chưa xử lý' },
+];
 
 export default function GuidelineEditorPage(): JSX.Element {
     const { id } = useParams<{ id: string }>();
@@ -490,6 +506,54 @@ export default function GuidelineEditorPage(): JSX.Element {
                                 </div>
                             </Col>
                         ))}
+                    </Row>
+                </>
+            ),
+        },
+        {
+            key: 'acceptance',
+            label: 'Nghiệm thu',
+            children: (
+                <>
+                    <p className='qc3d-cell-secondary'>
+                        Tiêu chí QA dùng khi nghiệm thu job theo hướng dẫn này. Để trống để dùng mặc định.
+                    </p>
+                    <Row gutter={[16, 12]}>
+                        {ACCEPTANCE_FIELDS.map((field) => {
+                            const raw = content.acceptance?.[field.key];
+                            const shown = raw === undefined ? undefined : Number((field.percent ? raw * 100 : raw).toFixed(2));
+                            return (
+                                <Col xs={24} lg={12} key={field.key}>
+                                    <div className='qc3d-threshold-option'>
+                                        <InputNumber
+                                            size='small'
+                                            min={field.min}
+                                            max={field.max}
+                                            step={field.percent ? 0.5 : 1}
+                                            precision={field.percent ? 2 : 0}
+                                            addonAfter={field.percent ? '%' : undefined}
+                                            style={{ width: 130 }}
+                                            placeholder={String(field.fallback)}
+                                            value={shown}
+                                            aria-label={field.label}
+                                            disabled={readOnly}
+                                            onChange={(value) => setContent((c) => {
+                                                const next = { ...(c.acceptance ?? {}) };
+                                                if (value === null || value === undefined) delete next[field.key];
+                                                else next[field.key] = field.percent ? Number(value) / 100 : Number(value);
+                                                return { ...c, acceptance: next };
+                                            })}
+                                        />
+                                        <div>
+                                            <div>{field.label}</div>
+                                            <span className='qc3d-cell-secondary'>
+                                                {`${field.hint} · mặc định ${field.fallback}${field.percent ? '%' : ''}`}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </Col>
+                            );
+                        })}
                     </Row>
                 </>
             ),

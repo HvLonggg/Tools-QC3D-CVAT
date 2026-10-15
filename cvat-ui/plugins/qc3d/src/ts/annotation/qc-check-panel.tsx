@@ -1156,6 +1156,12 @@ export function QcCheckPanel(): JSX.Element {
                         />
                         Điểm tròn mịn (ít nhiễu hơn điểm vuông)
                     </label>
+                    <label className='qc3d-switch'>
+                        <Switch size='small' checked={viewer.guides}
+                            onChange={(checked) => setViewer({ ...viewer, guides: checked })}
+                        />
+                        Vòng khoảng cách 10/20/30 m và lưới mặt đường
+                    </label>
                     <Button size='small' type='link' onClick={() => setViewer(DEFAULT_VIEWER)}>Về mặc định</Button>
 
                     <div className='qc3d-section-title'>Đối tượng</div>

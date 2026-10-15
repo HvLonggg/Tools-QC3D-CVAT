@@ -7,7 +7,7 @@ import {
     Link, Route, Switch, useHistory, useLocation,
 } from 'react-router-dom';
 import {
-    AppstoreOutlined, ArrowLeftOutlined, AuditOutlined, CheckSquareOutlined, FileTextOutlined,
+    AppstoreOutlined, ArrowLeftOutlined, AuditOutlined, CheckSquareOutlined, FileTextOutlined, ProjectOutlined,
     QuestionCircleOutlined, SafetyCertificateOutlined, TagsOutlined, TeamOutlined, TrophyOutlined,
 } from '@ant-design/icons';
 import Breadcrumb from 'antd/lib/breadcrumb';
@@ -16,13 +16,15 @@ import ConfigProvider from 'antd/lib/config-provider';
 import Menu from 'antd/lib/menu';
 import Modal from 'antd/lib/modal';
 
-import DashboardPage, { ReviewPage } from './pages/dashboard';
+import DashboardPage from './pages/dashboard';
+import ReviewPage from './pages/review';
+import BoardPage from './pages/board';
+import AcceptancePage from './pages/acceptance';
 import JobPage from './pages/job-page';
 import AdminPage from './pages/admin';
 import TaxonomyPage from './pages/taxonomy';
 import GuidelinesPage from './pages/guidelines';
 import GuidelineEditorPage from './pages/guideline-editor';
-import PlannedPage from './pages/planned';
 import MyWorkPage from './pages/my-work';
 import useSummary from './use-summary';
 import './styles.scss';
@@ -31,6 +33,7 @@ import './styles.scss';
 const SECTIONS = [
     { key: '/qc3d', label: 'Tổng quan', icon: <AppstoreOutlined />, team: false },
     { key: '/qc3d/my', label: 'Chất lượng của tôi', icon: <TrophyOutlined />, team: false },
+    { key: '/qc3d/board', label: 'Trạng thái job', icon: <ProjectOutlined />, team: false },
     { key: '/qc3d/review', label: 'Hàng đợi review', icon: <AuditOutlined />, team: true },
     { key: '/qc3d/qa', label: 'Nghiệm thu QA', icon: <CheckSquareOutlined />, team: true },
     { key: '/qc3d/guidelines', label: 'Guideline QC', icon: <FileTextOutlined />, team: false },
@@ -47,7 +50,7 @@ export default function Qc3dApp(): JSX.Element {
     const sections = SECTIONS.filter((item) => !item.team || isTeam)
         .map(({ key, label, icon }) => ({ key, label, icon }));
     const isJob = pathname.startsWith('/qc3d/jobs/');
-    const selected = isJob ? '/qc3d/review' :
+    const selected = isJob ? '/qc3d/board' :
         [...SECTIONS].reverse().find(({ key }) => pathname.startsWith(key))?.key ?? '/qc3d';
     const section = SECTIONS.find(({ key }) => key === selected);
 
@@ -92,13 +95,9 @@ export default function Qc3dApp(): JSX.Element {
                             <Route exact path='/qc3d' component={DashboardPage} />
                             <Route exact path='/qc3d/jobs/:jobId' component={JobPage} />
                             <Route exact path='/qc3d/my' component={MyWorkPage} />
+                            <Route exact path='/qc3d/board' component={BoardPage} />
                             <Route exact path='/qc3d/review' component={ReviewPage} />
-                            <Route exact path='/qc3d/qa'>
-                                <PlannedPage
-                                    title='Nghiệm thu QA'
-                                    description='Lấy mẫu đối tượng và đánh giá chất lượng trước khi nghiệm thu.'
-                                />
-                            </Route>
+                            <Route exact path='/qc3d/qa' component={AcceptancePage} />
                             <Route exact path='/qc3d/guidelines' component={GuidelinesPage} />
                             <Route exact path='/qc3d/guidelines/:id' component={GuidelineEditorPage} />
                             <Route exact path='/qc3d/classes' component={TaxonomyPage} />
@@ -110,7 +109,11 @@ export default function Qc3dApp(): JSX.Element {
                     onCancel={() => setHelpOpen(false)}
                 >
                     <ol className='qc3d-help-steps'>
-                        <li><strong>Chọn job 3D</strong><p>Mở job từ Tổng quan hoặc Hàng đợi review.</p></li>
+                        <li>
+                            <strong>Quy trình 3 cấp</strong>
+                            <p>Gán nhãn → nộp → QC duyệt (đạt / trả lại) → QA nghiệm thu mẫu → lead chốt. Xem ở Trạng thái job.</p>
+                        </li>
+                        <li><strong>Chọn job 3D</strong><p>Mở job từ Trạng thái job hoặc Hàng đợi review.</p></li>
                         <li>
                             <strong>Chạy kiểm tra QC</strong>
                             <p>QC dùng guideline của task hoặc project để phát hiện lỗi.</p>
