@@ -11,6 +11,8 @@ import { PluginEntryPoint, ComponentBuilder } from 'components/plugins-entrypoin
 import { DimensionType } from 'cvat-core-wrapper';
 import { setCore } from './api';
 import Qc3dApp from './qc3d-app';
+import { QcCheckPanel, QcTabLabel } from './annotation/qc-check-panel';
+import './annotation/styles.scss';
 
 const PLUGIN_NAME = 'QC 3D AutoFix';
 
@@ -47,6 +49,18 @@ const jobMenuItem = ({ key, targetProps }: {
     label: <Link to={`/qc3d/jobs/${targetProps.jobInstance.id}`}>QC 3D</Link>,
 });
 
+// tab next to Objects / Labels in the annotation view of a 3D job
+const qcCheckTab = (): object => ({
+    key: 'qc3d-check',
+    label: <QcTabLabel />,
+    forceRender: true,
+    children: <QcCheckPanel />,
+});
+
+const is3dJob = (props?: { jobInstance?: { dimension?: string } }): boolean => (
+    props?.jobInstance?.dimension === DimensionType.DIMENSION_3D
+);
+
 const routes = (): JSX.Element => <Route key='qc3d' path='/qc3d' component={Qc3dApp} />;
 
 const builder: ComponentBuilder = ({ core, dispatch, actionCreators }) => {
@@ -56,12 +70,8 @@ const builder: ComponentBuilder = ({ core, dispatch, actionCreators }) => {
         ['header.navigation.items', NavigationButton, { weight: 10 }],
         ['header.userMenu.items', userMenuItem, { weight: 5 }],
         ['router', routes, {}],
-        ['jobActions.items', jobMenuItem, {
-            weight: 100,
-            shouldBeRendered: (props?: { jobInstance?: { dimension?: string } }) => (
-                props?.jobInstance?.dimension === DimensionType.DIMENSION_3D
-            ),
-        }],
+        ['jobActions.items', jobMenuItem, { weight: 100, shouldBeRendered: is3dJob }],
+        ['annotationPage.objectsSideBar.tabs.items', qcCheckTab, { weight: 10, shouldBeRendered: is3dJob }],
     ];
 
     for (const [path, component, data] of components) {

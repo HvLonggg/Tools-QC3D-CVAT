@@ -81,6 +81,25 @@ export interface Configuration {
     controlPointsSize: number;
     focusedObjectPadding: number;
     orientationVisibility: OrientationVisibility;
+    pointSize: number;
+    pointColorMode: PointColorMode;
+    pointFocus: boolean;
+    pointDepthShading: boolean;
+    pointRound: boolean;
+    qcMarkers: QCMarker[];
+}
+
+export type PointColorMode = 'default' | 'height' | 'intensity' | 'range' | 'objects';
+export const POINT_COLOR_MODES: PointColorMode[] = ['default', 'height', 'intensity', 'range', 'objects'];
+
+export interface QCMarker {
+    clientID: number;
+    // marked: picked by the reviewer for a model fix (QC panel)
+    severity: 'blocker' | 'major' | 'minor' | 'marked';
+    label?: string;
+    rule?: string;
+    message?: string;
+    metrics?: string[];
 }
 
 export enum UpdateReasons {
@@ -205,6 +224,12 @@ export class Canvas3dModelImpl extends MasterImpl implements Canvas3dModel {
                     y: false,
                     z: false,
                 },
+                pointSize: consts.POINT_CLOUD_SIZE,
+                pointColorMode: 'default',
+                pointFocus: false,
+                pointDepthShading: false,
+                pointRound: false,
+                qcMarkers: [],
             },
             isFrameUpdating: false,
             nextSetupRequest: null,
@@ -435,6 +460,37 @@ export class Canvas3dModelImpl extends MasterImpl implements Canvas3dModel {
             this.data.configuration.focusedObjectPadding = Math.max(
                 configuration.focusedObjectPadding, 0,
             );
+        }
+
+        if (typeof configuration.pointSize === 'number' && Number.isFinite(configuration.pointSize)) {
+            this.data.configuration.pointSize = Math.max(0.005, Math.min(configuration.pointSize, 0.5));
+        }
+
+        if (POINT_COLOR_MODES.includes(configuration.pointColorMode)) {
+            this.data.configuration.pointColorMode = configuration.pointColorMode;
+        }
+
+        if (typeof configuration.pointFocus === 'boolean') {
+            this.data.configuration.pointFocus = configuration.pointFocus;
+        }
+        if (typeof configuration.pointDepthShading === 'boolean') {
+            this.data.configuration.pointDepthShading = configuration.pointDepthShading;
+        }
+        if (typeof configuration.pointRound === 'boolean') {
+            this.data.configuration.pointRound = configuration.pointRound;
+        }
+        if (Array.isArray(configuration.qcMarkers)) {
+            this.data.configuration.qcMarkers = configuration.qcMarkers.filter((marker) => (
+                marker && Number.isInteger(marker.clientID) && ['blocker', 'major', 'minor', 'marked'].includes(marker.severity)
+            )).slice(0, 500).map((marker) => ({
+                clientID: marker.clientID,
+                severity: marker.severity,
+                label: typeof marker.label === 'string' ? marker.label.slice(0, 80) : '',
+                rule: typeof marker.rule === 'string' ? marker.rule.slice(0, 80) : '',
+                message: typeof marker.message === 'string' ? marker.message.slice(0, 350) : '',
+                metrics: Array.isArray(marker.metrics) ?
+                    marker.metrics.filter((value) => typeof value === 'string').slice(0, 5) : [],
+            }));
         }
 
         this.notify(UpdateReasons.CONFIG_UPDATED);

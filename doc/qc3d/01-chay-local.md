@@ -1,7 +1,41 @@
 # QC 3D AutoFix: chạy trên CVAT local
 
-Phạm vi: Sprint 1 (nút QC 3D, trang Tổng quan / Review / QA / Quản trị, API `/api/qc3d/summary`).
+Phạm vi: Tổng quan, hàng đợi review, guideline, kiểm tra và AutoFix trong job 3D.
 Áp dụng cho CVAT v2.74.1 chạy bằng Docker Desktop trên Windows.
+
+## Chạy cấu hình nhẹ (cập nhật 12/10/2026)
+
+```powershell
+# Chỉ xem / gán nhãn job hiện có, chạy QC và AutoFix:
+powershell -NoProfile -File utils\qc3d\start_local.ps1
+
+# Khi cần tạo task hoặc nhập / xuất dữ liệu:
+powershell -NoProfile -File utils\qc3d\start_local.ps1 -Mode data
+
+# Quay lại cấu hình nhẹ sau khi nhập / xuất hoàn tất:
+powershell -NoProfile -File utils\qc3d\start_local.ps1 -Mode light
+```
+
+Mở **http://localhost:8070/qc3d**. Cấu hình nhẹ chạy server và worker chunks với một
+process mỗi dịch vụ. Worker import/export/annotation/utils, Grafana, webhooks, quality reports,
+consensus và Nuclio/Mask2Former chỉ bật khi có nhu cầu. ClickHouse/Vector vẫn chạy cho event log;
+ClickHouse giới hạn 0,5 CPU để các tác vụ nền không chiếm hết CPU. Không xóa dữ liệu hay volume.
+
+Script chỉ dừng các container CVAT phụ có tên xác định; không dừng dự án khác.
+Worker nhập/xuất chưa bật thì yêu cầu tương ứng sẽ chờ trong hàng đợi. Bật chế độ `data` để xử lý.
+Chế độ `full` bật các worker và dashboard tùy chọn của CVAT; không tự bật model Nuclio riêng.
+
+Build tiết kiệm RAM có thể dùng image cache `cvat-ui-build:qc3d`, chép source mới vào `/tmp`,
+rồi chạy `node --max-old-space-size=1800 utils/qc3d/build_ui.cjs` từ `/tmp`.
+Script minify tuần tự, không tạo worker theo tất cả CPU. Dừng server/chunks trong khi build trên máy 8 GB,
+rồi bật lại sau khi build. Đóng gói bundle đã build ở `cvat-ui/dist` bằng:
+
+```powershell
+docker build --network none -f utils/qc3d/Dockerfile.ui-runtime -t cvat/ui:qc3d .
+powershell -NoProfile -File utils\qc3d\start_local.ps1
+```
+
+Các mục bên dưới là hướng dẫn triển khai ban đầu; ưu tiên cấu hình nhẹ ở trên cho máy này.
 
 ## 0. Cấu hình máy đã đo (09/10/2026)
 

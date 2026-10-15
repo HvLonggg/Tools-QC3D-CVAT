@@ -47,6 +47,9 @@ class QcRun(models.Model):
     duration_ms = models.IntegerField(default=0)
     # [{"rule": "R05", "status": "checked", "reason": "", "issues": 3}, ...]
     coverage = models.JSONField(default=list)
+    # guideline applied: {"id", "name", "revision", "source": "task" | "project" | "default" | "builtin"}
+    guideline = models.JSONField(default=dict)
+    frames = models.JSONField(null=True, blank=True)  # checked frames; None: the whole job
 
     class Meta:
         ordering = ("-id",)
@@ -100,3 +103,98 @@ class QcIssue(models.Model):
     class Meta:
         ordering = ("frame", "rule", "id")
         indexes = [models.Index(fields=["run", "status"])]
+
+
+class QcGuideline(models.Model):
+    """A labeling guideline (classes, sizes, thresholds, rules) that QC applies to the jobs it is bound to."""
+
+    name = models.CharField(max_length=256)
+    description = models.TextField(blank=True, default="")
+    content = models.JSONField()  # normalized by qc.guideline.normalize
+    revision = models.IntegerField(default=1)  # +1 on every content change
+    source_name = models.CharField(max_length=256, blank=True, default="")  # imported file
+    is_default = models.BooleanField(default=False)  # used by jobs without a task / project binding
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
+    )
+    created_date = models.DateTimeField(auto_now_add=True)
+    updated_date = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-updated_date",)
+
+    def __str__(self) -> str:
+        return f"{self.name} r{self.revision}"
+
+
+class QcGuidelineBinding(models.Model):
+    """Applies a guideline to a whole project or to one task (the task binding wins)."""
+
+    guideline = models.ForeignKey(QcGuideline, on_delete=models.CASCADE, related_name="bindings")
+    project = models.OneToOneField(
+        "engine.Project", on_delete=models.CASCADE, null=True, blank=True, related_name="qc3d_guideline"
+    )
+    task = models.OneToOneField(
+        "engine.Task", on_delete=models.CASCADE, null=True, blank=True, related_name="qc3d_guideline"
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(project__isnull=False, task__isnull=True)
+                | models.Q(project__isnull=True, task__isnull=False),
+                name="qc3d_binding_project_xor_task",
+            ),
+        ]
+
+
+class QcJobSettings(models.Model):
+    """Per-job QC choices made by the reviewer in the annotation view."""
+
+    job = models.OneToOneField("engine.Job", on_delete=models.CASCADE, related_name="qc3d_settings")
+    # classes the reviewer does not trust the automatic fix for: auto-fix never touches them
+    autofix_excluded_labels = models.JSONField(default=list)
+    # whether auto-fix also adds boxes for objects the model sees without a label
+    autofix_create = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
+    )
+    updated_date = models.DateTimeField(auto_now=True)
+
+
+class QcJobAssignment(models.Model):
+    """
+    Who held a job at which stage. CVAT keeps only the current assignee, which becomes the reviewer when
+    the job moves to validation: this history keeps the annotator, so each person can follow the QC of
+    the jobs they labeled. Written by signals.py on every assignee / stage change.
+    """
+
+    job = models.ForeignKey("engine.Job", on_delete=models.CASCADE, related_name="qc3d_assignments")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    stage = models.CharField(max_length=32)
+    started_date = models.DateTimeField()
+    ended_date = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("job_id", "started_date", "id")
+        indexes = [models.Index(fields=["user", "stage"]), models.Index(fields=["job", "ended_date"])]
+
+
+class QcDetection(models.Model):
+    """Output of the detection model on one frame of a job (computed once, read by QC rule R12)."""
+
+    job = models.ForeignKey("engine.Job", on_delete=models.CASCADE, related_name="qc3d_detections")
+    frame = models.IntegerField()
+    model_key = models.CharField(max_length=64)
+    # [[x, y, z, length, width, height, yaw, label, score], ...] in the job's LiDAR frame, score >= 0.3
+    boxes = models.JSONField(default=list)
+    ground_z = models.FloatField()  # road height used to put the cloud in the model's frame
+    created_date = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["job", "frame", "model_key"], name="qc3d_unique_detection"),
+        ]

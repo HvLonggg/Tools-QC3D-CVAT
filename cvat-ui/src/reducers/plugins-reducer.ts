@@ -69,6 +69,11 @@ const defaultState: PluginsState = {
             menuActions: {
                 items: [],
             },
+            objectsSideBar: {
+                tabs: {
+                    items: [],
+                },
+            },
         },
         taskPage: {
             details: {

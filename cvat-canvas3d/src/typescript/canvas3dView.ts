@@ -25,6 +25,7 @@ export interface Canvas3dView {
     render(): void;
     keyControls(keys: KeyboardEvent): void;
     focusObjectByClientId(clientID: number, animate?: boolean): void;
+    destroy(): void;
 }
 
 export enum CameraAction {
@@ -91,6 +92,21 @@ const BOTTOM_VIEWS = [
 
 const ALL_VIEWS = [...BOTTOM_VIEWS, ViewType.PERSPECTIVE];
 
+const QC_COLORS = { blocker: '#ff4d5f', major: '#ffb020', minor: '#56b6ff', marked: '#e040fb' };
+const QC_SEVERITY = {
+    blocker: 'Nghiêm trọng', major: 'Cần xử lý', minor: 'Lưu ý', marked: 'Đã chọn để sửa',
+};
+// soft perceptual ramps, readable on a dark background without glare
+const SOFT_RAMP = [
+    [0.28, 0.33, 0.72], [0.16, 0.55, 0.62], [0.30, 0.74, 0.45], [0.82, 0.86, 0.30], [0.98, 0.66, 0.28],
+];
+const RANGE_RAMP = [
+    [1.0, 0.80, 0.52], [0.93, 0.60, 0.42], [0.62, 0.52, 0.70], [0.36, 0.48, 0.76], [0.26, 0.36, 0.60],
+];
+const OBJECT_RAMP = [
+    [0.36, 0.80, 0.78], [0.50, 0.86, 0.50], [0.92, 0.86, 0.42], [1.0, 0.64, 0.38], [0.98, 0.48, 0.52],
+];
+
 function drawnDataFromState(state: ObjectState): DrawnObjectData {
     return {
         serverID: state.serverID,
@@ -123,6 +139,12 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
     private statesToBeGrouped: ObjectState[];
     private statesToBeMerged: ObjectState[];
     private sceneBBox: THREE.Box3;
+    private perspectiveCloud: THREE.Points | null = null;
+    private sourceColors: Float32Array | null = null;
+    private appliedPointSignature = '';
+    private focusedPointCount: number | null = null;
+    private qcOverlay: HTMLDivElement | null = null;
+    private qcBadges = new Map<number, HTMLDivElement>();
     private sideViewsZoomMemory: Record<number, SideViewsZoomMemory>;
     private model: Canvas3dModel & Master;
     private drawnObjects: Record<number, {
@@ -134,6 +156,8 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
     public focusObjectByClientId(clientID: number, animate: boolean = true): void {
         const cuboidModel = this.drawnObjects[clientID];
         if (cuboidModel) {
+            delete this.sideViewsZoomMemory[clientID];
+            this.updateSideViewsZoom();
             this.fitObject(cuboidModel.cuboid, animate);
         }
     }
@@ -162,7 +186,7 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
     private get selectedCuboid(): CuboidModel | null {
         const { clientID } = this.model.data.activeElement;
         if (clientID !== null) {
-            return this.drawnObjects[+clientID].cuboid || null;
+            return this.drawnObjects[+clientID]?.cuboid || null;
         }
 
         return null;
@@ -693,19 +717,21 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
 
         // 2) Transform corners to world space (includes scale/rotation/translation)
         const worldCorners: THREE.Vector3[] = cornersLocal.map((v) => mesh.localToWorld(v.clone()));
+        if (worldCorners.some((point) => !point.toArray().every(Number.isFinite))) return;
 
         // 3) Build camera basis in world
         const forward = new THREE.Vector3();
         camera.getWorldDirection(forward).normalize();
-        const up = camera.up.clone().normalize();
-        const right = new THREE.Vector3().crossVectors(forward, up).normalize();
-        up.copy(new THREE.Vector3().crossVectors(right, forward).normalize());
+        const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+        const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
 
         // 4) Project corners onto right/up to get world extents independent of current distance
         let minU = +Infinity;
         let maxU = -Infinity;
         let minV = +Infinity;
         let maxV = -Infinity;
+        let minDepth = Infinity;
+        let maxDepth = -Infinity;
         for (const c of worldCorners) {
             const u = c.dot(right);
             const v = c.dot(up);
@@ -713,6 +739,9 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
             if (u > maxU) maxU = u;
             if (v < minV) minV = v;
             if (v > maxV) maxV = v;
+            const depth = c.dot(forward);
+            minDepth = Math.min(minDepth, depth);
+            maxDepth = Math.max(maxDepth, depth);
         }
         const widthWorld = maxU - minU;
         const heightWorld = maxV - minV;
@@ -722,7 +751,8 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
         const distByHeight = (heightWorld / 2) / Math.tan(vFov / 2);
         const distByWidth = (widthWorld / 2) / Math.tan(hFov / 2);
-        const distance = Math.max(distByHeight, distByWidth);
+        // Include depth so the camera stays outside elongated boxes viewed end-on.
+        const distance = Math.max(distByHeight, distByWidth, 0.3) + (maxDepth - minDepth) / 2;
 
         // 6) Center of geometry box in world
         const centerLocal = bb.getCenter(new THREE.Vector3());
@@ -731,6 +761,8 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         // 7) Move along forward and look at center
         const margin = 1.5;
         const targetPosition = center.clone().sub(forward.multiplyScalar(distance * margin));
+        camera.near = Math.max(0.01, Math.min(0.1, distance / 20));
+        camera.updateProjectionMatrix();
         this.views.perspective.controls.setLookAt(
             targetPosition.x,
             targetPosition.y,
@@ -1153,6 +1185,9 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
             return consts.SPLITTING_COLOR;
         }
 
+        const marker = this.model.data.configuration.qcMarkers.find((item) => item.clientID === state.clientID);
+        if (marker) return QC_COLORS[marker.severity];
+
         if (state instanceof ObjectState) {
             if (colorBy === 'Label') {
                 return state.label.color;
@@ -1319,6 +1354,8 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         this.updateObjects(updated);
         this.deleteObjects(deleted);
         this.activateObject();
+        this.applyPointStyle();
+        this.applyQcColors();
     }
 
     private addSceneChildren(shapeObject: CuboidModel): void {
@@ -1437,7 +1474,7 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
                                     ) {
                                         acc.color.push(color.array[i], color.array[i + 1], color.array[i + 2]);
                                     } else {
-                                        acc.color.push(255, 255, 255);
+                                        acc.color.push(1, 1, 1);
                                     }
 
                                     if (
@@ -1518,10 +1555,14 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
                 // in case of changing control points size, need to update all helper points size
                 this.updateHelperPointsSize(view);
             });
+            this.applyPointStyle();
+            this.applyQcColors();
         } else if (reason === UpdateReasons.SHAPE_ACTIVATED) {
             this.deactivateObject();
             this.activateObject();
             this.updateSideViewsZoom();
+            this.applyPointStyle();
+            this.applyQcColors();
         } else if (reason === UpdateReasons.DRAW) {
             const data: DrawData = this.controller.drawData;
             if (Number.isInteger(data.redraw)) {
@@ -1649,6 +1690,13 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
 
         this.drawnObjects = {};
         this.activatedElementID = null;
+        this.perspectiveCloud = null;
+        this.sourceColors = null;
+        this.appliedPointSignature = '';
+        this.focusedPointCount = null;
+        this.qcOverlay?.remove();
+        this.qcOverlay = null;
+        this.qcBadges.clear();
 
         Object.keys(this.views).forEach((view: string): void => {
             const viewData = this.views[view as keyof Views];
@@ -1751,6 +1799,347 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         return helperWorldSize;
     }
 
+    /**
+     * Point size, shape and colouring of the perspective cloud, for easier reading:
+     *  - height / intensity / range: soft perceptual ramp over the robust (2-98 %) value range
+     *  - objects: ground points muted, everything standing on the ground coloured by its height above it
+     *  - depth shading: points dimmed with distance from the sensor (near objects stand out)
+     *  - round points: discs instead of squares (less visual noise when points are large)
+     */
+    private applyPointStyle(): void {
+        const cloud = this.perspectiveCloud;
+        if (!cloud) return;
+        const {
+            pointSize, pointColorMode, pointFocus, pointDepthShading, pointRound,
+        } = this.model.data.configuration;
+        const material = cloud.material as THREE.PointsMaterial;
+        material.size = pointSize;
+        const round = pointRound ? Canvas3dViewImpl.roundPointTexture() : null;
+        if (material.map !== round) {
+            material.map = round;
+            material.alphaTest = round ? 0.5 : 0;
+            material.needsUpdate = true;
+        }
+        const candidate = pointFocus ? this.selectedCuboid?.perspective : null;
+        const focused = candidate && candidate.position.toArray().every(Number.isFinite) &&
+            candidate.scale.toArray().every((value) => Number.isFinite(value) && value > 0) ? candidate : null;
+        const signature = `${pointColorMode}:${pointDepthShading}:${focused ?
+            [...focused.position.toArray(), ...focused.rotation.toArray().slice(0, 3), ...focused.scale.toArray()]
+                .join(',') : 'scene'}`;
+        if (signature === this.appliedPointSignature) return;
+        this.focusedPointCount = null;
+
+        let geometry = cloud.geometry as THREE.BufferGeometry;
+        let color = geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
+        if (!color) return;
+        if (!this.sourceColors) {
+            this.sourceColors = color.array as Float32Array;
+        }
+        if (pointColorMode === 'default' && !focused && !pointDepthShading && color.array === this.sourceColors) {
+            this.appliedPointSignature = signature;
+            return;
+        }
+        if (color.array === this.sourceColors) {
+            // Isolate colours only when a custom mode is used; coordinate buffers remain shared.
+            const perspectiveGeometry = new THREE.BufferGeometry();
+            for (const [name, attribute] of Object.entries(geometry.attributes)) {
+                perspectiveGeometry.setAttribute(name, name === 'color' ? attribute.clone() : attribute);
+            }
+            perspectiveGeometry.setIndex(geometry.index);
+            perspectiveGeometry.boundingBox = geometry.boundingBox;
+            perspectiveGeometry.boundingSphere = geometry.boundingSphere;
+            perspectiveGeometry.setDrawRange(geometry.drawRange.start, geometry.drawRange.count);
+            cloud.geometry = perspectiveGeometry;
+            geometry = perspectiveGeometry;
+            color = geometry.getAttribute('color') as THREE.BufferAttribute;
+        }
+
+        const target = color.array as Float32Array;
+        const { count } = color;
+        const xyz = geometry.getAttribute('position').array as ArrayLike<number>;
+        let values: ArrayLike<number> | null = null;
+        let stride = 1;
+        let offset = 0;
+        if (pointColorMode === 'height') {
+            values = xyz;
+            stride = 3;
+            offset = 2;
+        } else if (pointColorMode === 'intensity') {
+            const intensity = geometry.getAttribute('intensity');
+            values = intensity ? intensity.array as ArrayLike<number> : null;
+        } else if (pointColorMode === 'range') {
+            const range = new Float32Array(count);
+            for (let i = 0; i < count; i++) range[i] = Math.hypot(xyz[i * 3], xyz[i * 3 + 1]);
+            values = range;
+        }
+
+        if (pointColorMode === 'objects') {
+            const above = Canvas3dViewImpl.heightAboveGround(xyz, count);
+            for (let i = 0; i < count; i++) {
+                const h = above[i];
+                if (!Number.isFinite(h) || h < 0.25) {
+                    // ground: calm slate, slightly lifted by the original colour so road marks stay visible
+                    const source = this.sourceColors;
+                    const lift = (source[i * 3] + source[i * 3 + 1] + source[i * 3 + 2]) / 3;
+                    target[i * 3] = 0.24 + 0.16 * lift;
+                    target[i * 3 + 1] = 0.27 + 0.16 * lift;
+                    target[i * 3 + 2] = 0.32 + 0.16 * lift;
+                } else {
+                    Canvas3dViewImpl.ramp(OBJECT_RAMP, Math.min(1, (h - 0.25) / 2.75), target, i);
+                }
+            }
+        } else if (!values) {
+            target.set(this.sourceColors);
+        } else {
+            // robust range: 2nd-98th percentile of a sample
+            const step = Math.max(1, Math.ceil(count / 20000));
+            const sample: number[] = [];
+            for (let i = 0; i < count; i += step) {
+                const value = values[i * stride + offset];
+                if (Number.isFinite(value)) sample.push(value);
+            }
+            sample.sort((a, b) => a - b);
+            const lo = sample[Math.floor(sample.length * 0.02)] ?? 0;
+            const hi = sample[Math.floor(sample.length * 0.98)] ?? 1;
+            const range = hi - lo || 1;
+            // range: near = warm, far = cool, so depth reads like an atmosphere
+            const stops = pointColorMode === 'range' ? RANGE_RAMP : SOFT_RAMP;
+            for (let i = 0; i < count; i++) {
+                const value = values[i * stride + offset];
+                if (!Number.isFinite(value)) {
+                    for (let c = 0; c < 3; c++) target[i * 3 + c] = this.sourceColors[i * 3 + c];
+                    continue;
+                }
+                Canvas3dViewImpl.ramp(stops, Math.min(1, Math.max(0, (value - lo) / range)), target, i);
+            }
+        }
+        if (pointDepthShading) {
+            // brightness 100 % up to 8 m, easing to 45 % at 80 m: near structure stands out of the far clutter
+            for (let i = 0; i < count; i++) {
+                const distance = Math.hypot(xyz[i * 3], xyz[i * 3 + 1]);
+                const t = Math.min(1, Math.max(0, (distance - 8) / 72));
+                const factor = 1 - 0.55 * Math.sqrt(t);
+                for (let c = 0; c < 3; c++) target[i * 3 + c] *= factor;
+            }
+        }
+        if (focused) {
+            // Use the actual oriented cuboid: keep all measured points, dim only its surrounding context.
+            focused.updateWorldMatrix(true, false);
+            cloud.updateWorldMatrix(true, false);
+            const matrix = focused.matrixWorld.clone().invert().multiply(cloud.matrixWorld).elements;
+            const positions = geometry.getAttribute('position');
+            const half = focused.scale.toArray().map((value) => 0.5 + 0.35 / Math.max(Math.abs(value), 0.01));
+            this.focusedPointCount = 0;
+            for (let i = 0; i < count; i++) {
+                const x = positions.getX(i);
+                const y = positions.getY(i);
+                const z = positions.getZ(i);
+                const localX = Math.abs(matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12]);
+                const localY = Math.abs(matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13]);
+                const localZ = Math.abs(matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14]);
+                const inside = localX <= half[0] && localY <= half[1] && localZ <= half[2];
+                if (localX <= 0.5 && localY <= 0.5 && localZ <= 0.5) this.focusedPointCount++;
+                for (let channel = 0; channel < 3; channel++) {
+                    const value = Math.min(1, Math.max(0, target[i * 3 + channel]));
+                    target[i * 3 + channel] = inside ? Math.max(0.25, value) : value * 0.08;
+                }
+            }
+        }
+        color.needsUpdate = true;
+        this.appliedPointSignature = signature;
+    }
+
+    private static roundTexture: THREE.Texture | null = null;
+
+    private static roundPointTexture(): THREE.Texture | null {
+        if (!Canvas3dViewImpl.roundTexture && typeof document !== 'undefined') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const context = canvas.getContext('2d');
+            if (!context) return null;
+            context.fillStyle = '#ffffff';
+            context.beginPath();
+            context.arc(32, 32, 30, 0, Math.PI * 2);
+            context.fill();
+            Canvas3dViewImpl.roundTexture = new THREE.CanvasTexture(canvas);
+        }
+        return Canvas3dViewImpl.roundTexture;
+    }
+
+    private static ramp(stops: number[][], value: number, target: Float32Array, index: number): void {
+        const t = value * (stops.length - 1);
+        const k = Math.min(Math.floor(t), stops.length - 2);
+        const f = t - k;
+        for (let c = 0; c < 3; c++) {
+            target[index * 3 + c] = stops[k][c] + (stops[k + 1][c] - stops[k][c]) * f;
+        }
+    }
+
+    /**
+     * Height of each point above the local ground. Ground per 2 m cell = 5th percentile of its z; a cell
+     * covered by an object (roof points only) takes the lowest ground of the cells within 4 m.
+     */
+    private static heightAboveGround(xyz: ArrayLike<number>, count: number): Float32Array {
+        const cell = 2;
+        const cells = new Map<number, number[]>();
+        const keys = new Int32Array(count * 2);
+        for (let i = 0; i < count; i++) {
+            const x = xyz[i * 3];
+            const y = xyz[i * 3 + 1];
+            const z = xyz[i * 3 + 2];
+            const ix = Math.floor(x / cell);
+            const iy = Math.floor(y / cell);
+            keys[i * 2] = ix;
+            keys[i * 2 + 1] = iy;
+            if (!Number.isFinite(z) || !Number.isFinite(ix) || !Number.isFinite(iy)) continue;
+            const key = ix * 65536 + iy;
+            const list = cells.get(key);
+            if (list) list.push(z); else cells.set(key, [z]);
+        }
+        const low = new Map<number, number>();
+        cells.forEach((values, key) => {
+            if (values.length < 3) return;
+            values.sort((a, b) => a - b);
+            low.set(key, values[Math.floor(values.length * 0.05)]);
+        });
+        const ground = new Map<number, number>();
+        const result = new Float32Array(count);
+        for (let i = 0; i < count; i++) {
+            const ix = keys[i * 2];
+            const iy = keys[i * 2 + 1];
+            const key = ix * 65536 + iy;
+            let level = ground.get(key);
+            if (level === undefined) {
+                level = Infinity;
+                for (let dx = -2; dx <= 2; dx++) {
+                    for (let dy = -2; dy <= 2; dy++) {
+                        const value = low.get((ix + dx) * 65536 + iy + dy);
+                        if (value !== undefined && value < level) level = value;
+                    }
+                }
+                ground.set(key, level);
+            }
+            result[i] = xyz[i * 3 + 2] - level;
+        }
+        return result;
+    }
+
+    private applyQcColors(): void {
+        const {
+            qcMarkers, outlinedBorders, pointFocus, selectedShapeOpacity, shapeOpacity,
+        } =
+            this.model.data.configuration;
+        const byID = new Map(qcMarkers.map((marker) => [marker.clientID, marker]));
+        for (const [id, { cuboid, data }] of Object.entries(this.drawnObjects)) {
+            const color = this.receiveShapeColor(data);
+            const marker = byID.get(+id);
+            const outline = marker ? QC_COLORS[marker.severity] : outlinedBorders || color;
+            cuboid.setColor(color);
+            cuboid.setOutlineColor(outline);
+            const selected = +id === this.activatedElementID;
+            const opacity = selected ? selectedShapeOpacity : shapeOpacity;
+            cuboid.setOpacity(selected && pointFocus ? Math.min(12, opacity) : opacity);
+            for (const view of BOTTOM_VIEWS) {
+                const edges = cuboid[view].getObjectByName(consts.CUBOID_EDGE_NAME) as THREE.LineSegments;
+                if (edges) (edges.material as THREE.LineBasicMaterial).color.set(outline);
+            }
+        }
+    }
+
+    private renderQcOverlay(): void {
+        const { qcMarkers } = this.model.data.configuration;
+        const { renderer, camera } = this.views.perspective;
+        const canvas = renderer.domElement;
+        const parent = canvas.parentElement;
+        if (!parent || !camera || !qcMarkers.length) {
+            this.qcOverlay?.remove();
+            this.qcOverlay = null;
+            this.qcBadges.clear();
+            return;
+        }
+        if (!this.qcOverlay) {
+            this.qcOverlay = document.createElement('div');
+            this.qcOverlay.className = 'cvat-qc3d-canvas-overlay';
+            Object.assign(this.qcOverlay.style, {
+                position: 'absolute', pointerEvents: 'none', overflow: 'hidden', zIndex: '5',
+            });
+            if (window.getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+            parent.appendChild(this.qcOverlay);
+        }
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+        Object.assign(this.qcOverlay.style, {
+            left: `${canvas.offsetLeft}px`, top: `${canvas.offsetTop}px`, width: `${width}px`, height: `${height}px`,
+        });
+        const visibleIDs = new Set<number>();
+        // Keep the selected diagnostics even in crowded scenes; limit badge DOM work.
+        const markers = [...qcMarkers].sort((a, b) => (
+            Number(b.clientID === this.activatedElementID) - Number(a.clientID === this.activatedElementID)
+        )).slice(0, 100);
+        for (const marker of markers) {
+            const object = this.drawnObjects[marker.clientID];
+            if (!object?.cuboid.perspective.visible) continue;
+            const mesh = object.cuboid.perspective;
+            const position = mesh.localToWorld(new THREE.Vector3(0, 0, 0.6)).project(camera);
+            if (position.z < -1 || position.z > 1 || Math.abs(position.x) > 1 || Math.abs(position.y) > 1) continue;
+            visibleIDs.add(marker.clientID);
+            let badge = this.qcBadges.get(marker.clientID);
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.className = 'cvat-qc3d-canvas-marker';
+                Object.assign(badge.style, {
+                    position: 'absolute',
+                    borderLeft: '3px solid',
+                    borderRadius: '6px',
+                    padding: '5px 8px',
+                    background: 'rgba(10, 20, 38, 0.92)',
+                    color: '#fff',
+                    font: '11px/1.55 system-ui, sans-serif',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+                    whiteSpace: 'pre-line',
+                });
+                this.qcOverlay.appendChild(badge);
+                this.qcBadges.set(marker.clientID, badge);
+            }
+            const selected = marker.clientID === this.activatedElementID;
+            const metrics = selected ? [
+                `QC: ${QC_SEVERITY[marker.severity]} · ${marker.rule || ''}`,
+                `D × R × C hiện tại: ${mesh.scale.toArray().map((value) => value.toFixed(2)).join(' × ')} m`,
+                ...(this.focusedPointCount !== null ? [`Điểm gốc trong box: ${this.focusedPointCount}`] : []),
+                ...(marker.metrics || []), marker.message || '',
+            ].filter(Boolean) : [];
+            const text = [`${marker.label || 'Đối tượng'} #${object.data.serverID ?? marker.clientID}`, ...metrics]
+                .join('\n');
+            if (badge.textContent !== text) {
+                badge.textContent = text;
+                badge.setAttribute('aria-label', text);
+            }
+            badge.style.borderColor = QC_COLORS[marker.severity];
+            badge.style.maxWidth = `${Math.max(120, Math.min(300, width - 16))}px`;
+            badge.style.zIndex = selected ? '2' : '1';
+            const x = ((position.x + 1) * width) / 2;
+            const y = ((1 - position.y) * height) / 2;
+            badge.style.left = `${Math.max(4, Math.min(x, width - badge.offsetWidth - 4))}px`;
+            badge.style.top = `${Math.max(4, Math.min(y, height - badge.offsetHeight - 4))}px`;
+        }
+        for (const [id, badge] of this.qcBadges) {
+            if (!visibleIDs.has(id)) {
+                badge.remove();
+                this.qcBadges.delete(id);
+            }
+        }
+    }
+
+    public destroy(): void {
+        this.model.unsubscribe(this);
+        this.qcOverlay?.remove();
+        this.qcBadges.clear();
+        this.qcOverlay = null;
+        this.perspectiveCloud = null;
+        this.sourceColors = null;
+    }
+
     private onSceneImageLoaded(points: any): void {
         const getCameraSettingsToFitScene = (
             camera: THREE.PerspectiveCamera,
@@ -1791,7 +2180,7 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         };
 
         // eslint-disable-next-line no-param-reassign
-        points.material.size = 0.05;
+        points.material.size = this.model.data.configuration.pointSize;
         points.material.color.set(new THREE.Color(0xffffff));
 
         const { controls } = this.views.perspective;
@@ -1810,6 +2199,11 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
         this.sceneBBox = new THREE.Box3().setFromObject(points);
         const perspectiveCloud = points.clone();
         this.views.perspective.scene.add(perspectiveCloud);
+        this.perspectiveCloud = perspectiveCloud;
+        const sourceColor = (points.geometry as THREE.BufferGeometry).getAttribute('color');
+        this.sourceColors = sourceColor ? sourceColor.array as Float32Array : null;
+        this.appliedPointSignature = '';
+        this.applyPointStyle();
 
         const origin = new THREE.Vector3(0, 0, 0);
         const isOriginInScene = this.sceneBBox.containsPoint(origin);
@@ -2048,6 +2442,7 @@ export class Canvas3dViewImpl implements Canvas3dView, Listener {
                 }
             }
         });
+        this.renderQcOverlay();
     }
 
     private adjustPerspectiveCameras(): void {

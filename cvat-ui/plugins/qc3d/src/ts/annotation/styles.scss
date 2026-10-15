@@ -1,0 +1,847 @@
+// Copyright (C) CVAT.ai Corporation
+//
+// SPDX-License-Identifier: MIT
+
+.qc3d-map-options {
+    padding: 10px 12px;
+    border: 1px solid #e1e7f2;
+    border-radius: 8px;
+    background: #f6f8fd;
+}
+
+.qc3d-map-legend {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 9px 0;
+    font-size: 10px;
+}
+
+.qc3d-map-legend span::before {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-right: 4px;
+    background: currentColor;
+}
+
+.qc3d-legend-blocker { color: #d9384a; }
+.qc3d-legend-marked { color: #c026d3; }
+.qc3d-legend-major { color: #a86400; }
+.qc3d-legend-minor { color: #2875b5; }
+
+.qc3d-point-presets {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+// QC Check tab: calm, low-contrast surfaces; colour only where it carries meaning.
+$qc-border: #e5eaf1;
+$qc-muted: #69788d;
+$qc-text: #203149;
+$qc-surface: #f5f8fc;
+$qc-accent: #2b65d9;
+$qc-blocker: #e5484d;
+$qc-major: #f5a524;
+$qc-minor: #4c8df6;
+$qc-ok: #30a46c;
+
+.qc3d-tab-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    .qc3d-tab-badge .ant-badge-count {
+        background: $qc-major;
+        box-shadow: none;
+    }
+}
+
+.qc3d-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 8px 10px 16px;
+    color: $qc-text;
+    height: 100%;
+    overflow: hidden auto;
+
+    .ant-segmented { border-radius: 9px; }
+    .ant-select, .ant-input-affix-wrapper { border-radius: 8px; }
+    .ant-empty { margin: 22px 0; }
+    .ant-alert { border-radius: 9px; }
+
+    &.qc3d-center {
+        align-items: center;
+        justify-content: center;
+        min-height: 200px;
+    }
+}
+
+.qc3d-panel-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: flex-start;
+
+    b { font-size: 14px; }
+
+    span {
+        display: block;
+        font-size: 11px;
+        color: $qc-muted;
+        margin-top: 3px;
+    }
+
+    .qc3d-panel-job {
+        white-space: nowrap;
+        padding: 3px 7px;
+        background: $qc-surface;
+        border-radius: 6px;
+    }
+}
+
+.qc3d-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid $qc-border;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #fff, $qc-surface);
+
+    .qc3d-stat {
+        display: flex;
+        flex-direction: column;
+        min-width: 42px;
+        line-height: 1.15;
+
+        b {
+            font-size: 21px;
+            font-weight: 650;
+            font-variant-numeric: tabular-nums;
+        }
+
+        span {
+            font-size: 11px;
+            color: $qc-muted;
+        }
+    }
+
+    .qc3d-run {
+        margin-left: auto;
+        border-radius: 8px;
+    }
+}
+
+.qc3d-guideline {
+    font-size: 11px;
+    color: $qc-muted;
+    padding: 0 2px;
+}
+
+.qc3d-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 10px;
+    border: 1px solid $qc-border;
+    border-radius: 10px;
+    background: $qc-surface;
+}
+
+.qc3d-review-navigation {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: $qc-muted;
+
+    > div {
+        display: flex;
+        gap: 5px;
+    }
+}
+
+.qc3d-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: $qc-text;
+    cursor: pointer;
+}
+
+.qc3d-card-focus {
+    display: block;
+    width: 100%;
+    border: 0;
+    padding: 0;
+    text-align: left;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    border-radius: 5px;
+
+    &:focus-visible {
+        outline: 2px solid $qc-accent;
+        outline-offset: 4px;
+    }
+
+    > .qc3d-card-meta {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 4px;
+        font-size: 11px;
+        color: $qc-muted;
+        margin-top: 5px;
+    }
+}
+
+.qc3d-severity {
+    font-size: 10px;
+    font-weight: 500;
+
+    &.qc3d-severity-blocker { color: #bd3439; }
+    &.qc3d-severity-major { color: #946314; }
+    &.qc3d-severity-minor { color: #3864a9; }
+}
+
+.qc3d-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.qc3d-card {
+    position: relative;
+    padding: 9px 10px 8px 13px;
+    border: 1px solid $qc-border;
+    border-radius: 10px;
+    background: #fff;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+
+    &::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        background: $qc-minor;
+    }
+
+    &.qc3d-sev-blocker::before { background: $qc-blocker; }
+    &.qc3d-sev-major::before { background: $qc-major; }
+
+    &:hover {
+        border-color: #d6d9e6;
+        box-shadow: 0 2px 8px rgba(30, 35, 60, 6%);
+    }
+
+    &.qc3d-card-active {
+        border-color: $qc-accent;
+        background: #f5f8ff;
+        box-shadow: 0 0 0 2px rgba(61, 111, 242, 12%);
+    }
+
+    &.qc3d-status-fixed,
+    &.qc3d-status-waived {
+        opacity: 0.78;
+    }
+}
+
+.qc3d-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+
+    .qc3d-card-title {
+        font-weight: 600;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+    }
+
+    .qc3d-card-meta {
+        font-size: 11px;
+        color: $qc-muted;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
+.qc3d-label-dot {
+    display: inline-block;
+    flex: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px #fff, 0 0 0 3px $qc-border;
+}
+
+.qc3d-chip {
+    margin-left: auto;
+    flex: none;
+    padding: 0 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 18px;
+    background: #f0f1f5;
+    color: #5b5b6b;
+
+    &.qc3d-chip-confirmed {
+        background: #fdecec;
+        color: #c4373c;
+    }
+
+    &.qc3d-chip-waived {
+        background: #eef6f1;
+        color: #2b7a52;
+    }
+
+    &.qc3d-chip-fixed {
+        background: #e9f7ef;
+        color: $qc-ok;
+    }
+}
+
+.qc3d-rules {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 6px 0 4px;
+
+    .qc3d-rule {
+        padding: 0 6px;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 18px;
+        background: $qc-surface;
+        border: 1px solid $qc-border;
+        color: #4a4a5a;
+    }
+}
+
+.qc3d-finding {
+    font-size: 12px;
+    color: #4a4a5a;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.qc3d-suggest {
+    margin-top: 4px;
+    font-size: 12px;
+
+    b { color: $qc-accent; }
+}
+
+.qc3d-proposal {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 5px 8px;
+    border-radius: 8px;
+    background: #f4f7ff;
+    font-size: 12px;
+    color: #2f4fb0;
+
+    .anticon { margin-top: 3px; }
+}
+
+.qc3d-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+
+    .ant-btn { border-radius: 7px; }
+}
+
+.qc3d-waive {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 240px;
+}
+
+.qc3d-auto,
+.qc3d-viewer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.qc3d-section-title {
+    margin-top: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.015em;
+    color: $qc-muted;
+}
+
+.qc3d-hint {
+    font-size: 12px;
+    color: $qc-muted;
+}
+
+.qc3d-plan {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid $qc-border;
+    border-radius: 10px;
+    background: $qc-surface;
+
+    .qc3d-plan-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+    }
+}
+
+.qc3d-skipped {
+    font-size: 12px;
+    color: #5b5b6b;
+
+    summary {
+        cursor: pointer;
+        color: $qc-accent;
+    }
+}
+
+.qc3d-slider-row {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+
+    .ant-slider { margin: 6px 4px; }
+}
+
+.qc3d-class-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.qc3d-class-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border: 1px solid $qc-border;
+    border-radius: 999px;
+    background: #fff;
+    font-size: 12px;
+    color: $qc-text;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s;
+
+    &:hover { background: $qc-surface; }
+
+    &.qc3d-class-off {
+        opacity: 0.6;
+        text-decoration: line-through;
+    }
+
+    &:focus-visible {
+        outline: 2px solid $qc-accent;
+        outline-offset: 2px;
+    }
+}
+
+.qc3d-job-page {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-width: 0;
+
+    > .ant-card {
+        border-color: $qc-border;
+        border-radius: 12px;
+        box-shadow: 0 3px 15px rgba(22, 45, 78, 3%);
+    }
+
+    .ant-card-head-title {
+        color: $qc-text;
+        font-size: 15px;
+    }
+    .ant-card-head { border-bottom-color: $qc-border; }
+    .ant-card-extra { font-size: 13px; }
+}
+
+.qc3d-job-back {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    width: fit-content;
+    font-size: 13px;
+}
+
+.qc3d-job-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+
+    h2 {
+        margin: 5px 0;
+        color: $qc-text;
+        font-size: 30px;
+        font-weight: 650;
+        letter-spacing: -0.6px;
+    }
+
+    p {
+        margin: 0;
+        color: $qc-muted;
+        overflow-wrap: anywhere;
+    }
+    .ant-btn { border-radius: 8px; }
+}
+
+.qc3d-job-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    font-weight: 600;
+    color: $qc-accent;
+}
+
+.qc3d-job-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+
+    > div {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        border: 1px solid $qc-border;
+        border-radius: 12px;
+        padding: 18px 20px;
+        background: #fff;
+    }
+
+    span {
+        color: $qc-muted;
+        font-size: 13px;
+    }
+
+    strong {
+        font-size: 32px;
+        line-height: 1.2;
+        font-weight: 650;
+        color: $qc-text;
+        font-variant-numeric: tabular-nums;
+    }
+
+    small {
+        font-size: 11px;
+        color: $qc-muted;
+    }
+
+    .qc3d-job-metric-open {
+        border-color: #d6e3fc;
+        background: #f5f8ff;
+    }
+    .qc3d-job-metric-open strong { color: $qc-accent; }
+}
+
+.qc3d-job-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+
+    > .ant-segmented {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+}
+
+.qc3d-job-search {
+    display: flex;
+    gap: 10px;
+    min-width: 290px;
+    flex: 1;
+    max-width: 520px;
+
+    > .ant-input-affix-wrapper {
+        flex: 1;
+        min-width: 0;
+        border-radius: 8px;
+    }
+
+    > .ant-select {
+        width: 145px;
+        flex-shrink: 0;
+    }
+}
+
+.qc3d-job-table-hint {
+    font-size: 12px;
+    color: $qc-muted;
+    margin-bottom: 14px;
+}
+
+.qc3d-job-guideline-details {
+    summary {
+        cursor: pointer;
+        color: $qc-accent;
+        font-weight: 500;
+    }
+    > .ant-space { margin-top: 12px; }
+    > details { margin-top: 12px; }
+
+    pre {
+        background: $qc-surface;
+        padding: 12px;
+        border-radius: 8px;
+    }
+}
+
+.qc3d-job-state {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 220px;
+    justify-content: center;
+    align-items: center;
+
+    .ant-alert { width: 100%; }
+}
+
+@media (width <= 1050px) {
+    .qc3d-job-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .qc3d-job-heading {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+}
+
+@media (width <= 600px) {
+    .qc3d-job-page { gap: 14px; }
+    .qc3d-job-metrics { gap: 9px; }
+    .qc3d-job-metrics > div { padding: 14px; }
+    .qc3d-job-metrics strong { font-size: 26px; }
+
+    .qc3d-job-search {
+        width: 100%;
+        min-width: 0;
+    }
+    .qc3d-job-page .ant-card-body { padding: 16px; }
+}
+
+.qc3d-autofix-intro {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #d6e4ff;
+    background: linear-gradient(135deg, #f3f7ff 0%, #f8f5ff 100%);
+    font-size: 12px;
+    line-height: 1.5;
+    color: #4a4f63;
+
+    b {
+        font-size: 13px;
+        color: #1f2a44;
+    }
+}
+
+.qc3d-autofix-guideline {
+    padding: 8px 0 2px;
+}
+
+.qc3d-kind-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 0;
+}
+
+.qc3d-kind-chip {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 18px;
+}
+
+.qc3d-kind-on {
+    background: #e8f6ef;
+    color: #1d7a4c;
+}
+
+.qc3d-kind-off {
+    background: #f4f4f6;
+    color: #8a8a99;
+    text-decoration: line-through;
+}
+
+.qc3d-plan-checks {
+    margin-top: 8px;
+}
+
+.qc3d-plan-item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 6px 8px;
+    margin-top: 6px;
+    border-radius: 8px;
+    background: #f7f8fb;
+    border-left: 3px solid #52c41a;
+
+    > div {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    b {
+        font-weight: 600;
+        color: #2b2f3d;
+    }
+
+    span {
+        color: #5b5f70;
+        overflow-wrap: anywhere;
+    }
+}
+
+.qc3d-plan-item-warning {
+    border-left-color: #faad14;
+}
+
+.qc3d-model-status {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 6px 0 10px;
+    padding: 8px 10px;
+    border: 1px solid #e1e7f2;
+    border-radius: 8px;
+    background: #fbfcfe;
+
+    .ant-progress { margin: 0; }
+}
+
+.qc3d-model-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #203149;
+
+    .ant-btn { margin-left: auto; padding: 0; }
+}
+
+.qc3d-proposal-warn {
+    margin-left: auto;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: #fff4e5;
+    color: #a86400;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.qc3d-runbar {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 4px 0 10px;
+
+    .ant-progress { margin: 0; line-height: 1; }
+}
+
+.qc3d-runbar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+
+    .ant-btn { min-width: 112px; }
+}
+
+/* reviewer picks wrong boxes by eye (Duyệt), the model fixes them (Autofix) */
+.qc3d-pick {
+    border: 1px dashed #d8b4fe;
+    border-radius: 8px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+}
+
+.qc3d-pick-on {
+    border-style: solid;
+    border-color: #c026d3;
+    background: rgba(224, 64, 251, 0.06);
+}
+
+.qc3d-pick-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.qc3d-pick-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.qc3d-pick-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: rgba(224, 64, 251, 0.12);
+    color: #86198f;
+    font-size: 11px;
+}
+
+.qc3d-pick-go {
+    border: 0;
+    padding: 0;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+}
+
+.qc3d-marked-fix {
+    border: 1px solid #e9d5ff;
+    border-radius: 8px;
+    padding: 8px;
+    margin-bottom: 10px;
+}
+
+.qc3d-marked-result {
+    margin-top: 6px;
+    font-size: 11px;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.qc3d-marked-ok { color: #237804; }
+.qc3d-marked-no { color: #a8071a; }

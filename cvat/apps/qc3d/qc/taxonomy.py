@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-TAXONOMY_VERSION = "vn-2026.10.1"
+TAXONOMY_VERSION = "vn-2026.10.2"
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,9 @@ CLASSES: dict[str, ClassSpec] = {
                   (6.5, 2.0, 2.6), (13.0, 2.7, 4.2), (10.5, 2.5, 3.3), (1.6, 0.15, 0.3), 500, 30.0),
         ClassSpec("Rider", "Người đi xe máy / xe đạp", "Xe máy, xe điện, xe đạp kèm người lái và người ngồi sau",
                   (1.1, 0.35, 1.0), (2.6, 1.3, 2.2), (1.9, 0.8, 1.65), (0.25, 0.15, 0.15), 100, 25.0),
+        # sizes measured on 359 parked two-wheelers of nuScenes-mini (p5-p95 widened); ~40 cm lower than Rider
+        ClassSpec("Motorbike", "Xe máy / xe đạp đỗ", "Xe máy, xe điện, xe đạp đang đỗ, không có người trên xe",
+                  (1.3, 0.4, 0.8), (2.8, 1.3, 1.6), (1.95, 0.6, 1.25), (0.27, 0.1, 0.14), 80, 3.0),
         ClassSpec("Pedestrian", "Người đi bộ", "Người đứng hoặc đi bộ, không trên phương tiện",
                   (0.2, 0.2, 0.9), (1.3, 1.3, 2.1), (0.65, 0.65, 1.65), (0.2, 0.2, 0.15), 60, 4.0),
     )
@@ -56,10 +59,24 @@ def size_log_likelihood(spec: ClassSpec, scale: tuple[float, float, float]) -> f
     return total
 
 
-def best_class_by_size(scale: tuple[float, float, float], candidates: list[str]) -> tuple[str, float]:
+# Rider and Motorbike have the same footprint; only a person on the vehicle makes it taller.
+# Medians on nuScenes-mini: Motorbike 1.29 m, Rider 1.71 m.
+TWO_WHEELER_SPLIT = 1.25  # below: nobody on it; ambiguous heights default to Rider (more common in traffic)
+
+
+def resolve_two_wheeler(name: str | None, height: float, classes) -> str | None:
+    """Rider vs Motorbike by height (a partly seen rider looks like a parked motorbike otherwise)."""
+    if name in ("Rider", "Motorbike") and {"Rider", "Motorbike"} <= set(classes):
+        return "Motorbike" if height < TWO_WHEELER_SPLIT else "Rider"
+    return name
+
+
+def best_class_by_size(
+    scale: tuple[float, float, float], candidates: list[str], classes: dict[str, ClassSpec] = CLASSES
+) -> tuple[str, float]:
     """Most likely class among candidates, and its log-likelihood margin over the runner-up."""
     scored = sorted(
-        ((size_log_likelihood(CLASSES[name], scale), name) for name in candidates if name in CLASSES),
+        ((size_log_likelihood(classes[name], scale), name) for name in candidates if name in classes),
         reverse=True,
     )
     if not scored:
@@ -69,9 +86,9 @@ def best_class_by_size(scale: tuple[float, float, float], candidates: list[str])
     return scored[0][1], scored[0][0] - scored[1][0]
 
 
-def as_dict() -> dict:
+def as_dict(classes: dict[str, ClassSpec] = CLASSES, version: str = TAXONOMY_VERSION) -> dict:
     return {
-        "version": TAXONOMY_VERSION,
+        "version": version,
         "classes": [
             {
                 "name": s.name,
@@ -80,9 +97,10 @@ def as_dict() -> dict:
                 "size_min": s.size_min,
                 "size_max": s.size_max,
                 "size_mean": s.size_mean,
+                "size_std": s.size_std,
                 "points_at_10m": s.points_at_10m,
                 "max_speed": s.max_speed,
             }
-            for s in CLASSES.values()
+            for s in classes.values()
         ],
     }

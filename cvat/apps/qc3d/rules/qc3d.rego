@@ -12,8 +12,12 @@ allow if {
 }
 
 # Job visibility is enforced by the CVAT job filters inside the views,
-# and QC roles (lead / reviewer / qa) are checked there for run and decision.
+# and QC roles are checked there for run, decision, fix and guideline changes.
+# view:quality: everyone sees their own work; only lead / QA see other people (checked in the view).
 allow if {
-    input.scope in {"view:summary", "view:report", "run:qc", "decide:issue", "fix:issue"}
+    input.scope in {
+        "view:summary", "view:report", "run:qc", "decide:issue", "fix:issue",
+        "view:guideline", "manage:guideline", "view:quality",
+    }
     utils.has_perm(utils.WORKER)
 }

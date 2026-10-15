@@ -36,6 +36,7 @@ interface Canvas3d {
     fitCanvas(): void;
     fit(): void;
     focus(clientID: number): void;
+    focusObject(clientID: number, animate?: boolean): void;
     group(groupData: GroupData): void;
     merge(mergeData: MergeData): void;
     split(splitData: SplitData): void;
@@ -113,6 +114,11 @@ class Canvas3dImpl implements Canvas3d {
         this.view.focusObjectByClientId(clientID, true);
     }
 
+    public focusObject(clientID: number, animate: boolean = true): void {
+        this.model.activate(String(clientID), null);
+        this.view.focusObjectByClientId(clientID, animate);
+    }
+
     public fit(): void {
         this.model.fit();
     }
@@ -123,6 +129,7 @@ class Canvas3dImpl implements Canvas3d {
     }
 
     public destroy(): void {
+        this.view.destroy();
         this.model.destroy();
     }
 }
@@ -132,3 +139,4 @@ export {
 };
 
 export type { ViewsDOM };
+export type { Configuration, QCMarker, PointColorMode } from './canvas3dModel';

@@ -19,17 +19,16 @@ from typing import Callable
 import numpy as np
 
 from .fit import class_from_points, describe_change, observe, propose_fit, propose_object_fix, visible_face_gaps
+from .objects import extend_to, reference_sizes, too_short
 from .geometry import Cuboid, count_points, iou_3d, wrap_angle
-from .taxonomy import CLASSES, best_class_by_size, size_log_likelihood
+from .verify import apply_changes, change_kinds, verify_fix
+from .taxonomy import CLASSES, ClassSpec, best_class_by_size, resolve_two_wheeler, size_log_likelihood
 
-RULES_VERSION = "2026.10.4"
+RULES_VERSION = "2026.10.14"
 
 BLOCKER, MAJOR, MINOR = "blocker", "major", "minor"
 
-DEFAULT_CONFIG = {
-    "labels": list(CLASSES),
-    # length, width, height ranges (m) per class: from the VN taxonomy (qc/taxonomy.py)
-    "size_ranges": {name: list(zip(s.size_min, s.size_max)) for name, s in CLASSES.items()},
+THRESHOLDS = {
     "track_size_tolerance": 0.15,
     # R02
     "duplicate_center_eps": 0.05,
@@ -39,7 +38,6 @@ DEFAULT_CONFIG = {
     "max_roll_pitch_deg": 15.0,
     # R05: minimum points = max(min_points, base * min(4, (10 / distance)^2))
     "min_points": 3,
-    "points_at_10m": {name: s.points_at_10m for name, s in CLASSES.items()},
     "far_distance": 60.0,  # beyond this a low-point warning is minor
     "ground_clearance": 0.2,
     "ring_margin": 0.5,
@@ -48,7 +46,6 @@ DEFAULT_CONFIG = {
     # R07 / R08 (need ego poses)
     "jump_min": 0.5,
     "jump_mad_factor": 6.0,
-    "max_speed": {name: s.max_speed for name, s in CLASSES.items()},
     # R09 ground contact
     "ground_tolerance": 0.3,
     "ground_major": 0.5,
@@ -61,7 +58,42 @@ DEFAULT_CONFIG = {
     "height_gap_ratio": 0.25,
     # R11 class by size
     "class_margin": 4.0,  # log-likelihood margin of the size prior
+    # auto-fix: a correction larger than this is left to the reviewer (qc/verify.py)
+    "autofix_max_shift": 1.5,  # m, box centre
+    "autofix_max_scale_change": 0.3,  # relative change of any size axis
+    "autofix_min_coverage": 0.95,  # share of the object points inside the corrected box
+    "autofix_class_margin": 2.0,  # size log-likelihood lead of a new class over every other class
+    # R12 model vs labels: only classes / range where the model was measured reliable on VN roads
+    # (PHENIKAA held-out scenes, epoch 20: Car and Rider within 40 m, precision 85-96 %)
+    "model_max_distance": 30.0,  # far objects: the model is not accurate enough yet (v1)
+    "model_missing_score": 0.6,  # a confident detection without any label nearby
+    "model_class_score": 0.4,  # a confident detection of another class on a labeled object
+    "model_match_distance": 1.5,  # m between a detection centre and a label centre
+    "model_missing_per_frame": 8,  # more missing objects than this in a frame: one issue for the frame
 }
+
+# classes whose model output R12 trusts (others are reported by the model but never acted on)
+MODEL_TRUSTED_CLASSES = ("Car", "Rider")
+
+
+def build_config(
+    classes: dict[str, ClassSpec] = CLASSES, thresholds: dict | None = None, disabled_rules=()
+) -> dict:
+    """QC configuration from a class guideline (default: the VN taxonomy) and threshold overrides."""
+    return {
+        **THRESHOLDS,
+        **(thresholds or {}),
+        "classes": dict(classes),
+        "labels": list(classes),
+        # length, width, height ranges (m) per class
+        "size_ranges": {name: list(zip(s.size_min, s.size_max)) for name, s in classes.items()},
+        "points_at_10m": {name: s.points_at_10m for name, s in classes.items()},
+        "max_speed": {name: s.max_speed for name, s in classes.items()},
+        "disabled_rules": sorted(disabled_rules),
+    }
+
+
+DEFAULT_CONFIG = build_config()
 
 
 @dataclass
@@ -103,7 +135,17 @@ class QcContext:
     poses: dict[int, np.ndarray] = field(default_factory=dict)
     # frame -> timestamp (s); used by R08 speed check
     timestamps: dict[int, float] = field(default_factory=dict)
+    # frame -> model detections [(x, y, z, l, w, h, yaw), label, score]; used by R12 (None: model not run)
+    detections: dict[int, list] | None = None
     config: dict = field(default_factory=lambda: dict(DEFAULT_CONFIG))
+    # box uid -> real size of its object over the frames (qc/objects.py); None: computed from `cuboids`
+    reference: dict[str, dict] | None = None
+    # boxes a reviewer marked as wrong (R14): each gets a complete correction, model included
+    marked: set[str] = field(default_factory=set)
+    # detections before one-box-per-object (run_rules): R12 still sees a second class the model considered
+    raw_detections: dict[int, list] | None = None
+    # (box geometry, margin) -> BoxObservation: several rules look at the same box's points
+    observations: dict = field(default_factory=dict, repr=False)
 
 
 RULES: dict[str, Callable[[QcContext], RuleResult]] = {}
@@ -115,6 +157,15 @@ def rule(code: str):
         return func
 
     return register
+
+
+def _observe(ctx: QcContext, box: Cuboid, boxes: list[Cuboid], margin: float = 0.4):
+    """observe() once per box and margin in a run (the other boxes of the frame are the same for all rules)."""
+    key = (box.uid, box.label, box.position, box.rotation, box.scale, round(margin, 3))
+    if key not in ctx.observations:
+        ctx.observations[key] = observe(ctx.point_clouds[box.frame], box, boxes, margin=margin,
+                                        classes=ctx.config["classes"])
+    return ctx.observations[key]
 
 
 def _finite(values) -> bool:
@@ -243,16 +294,17 @@ def r05_point_support(ctx: QcContext) -> RuleResult:
             proposal = None
             if distance <= cfg["fit_max_distance"]:
                 # the object may sit next to the box: search one box width around it
-                obs = observe(points, box, boxes, margin=box.scale[1] + 1.0)
+                obs = _observe(ctx, box, boxes, margin=box.scale[1] + 1.0)
                 if len(obs.points) >= cfg["fit_min_points"]:
-                    fitted = propose_fit(box, obs)
+                    fitted = propose_fit(box, obs, classes=cfg["classes"])
                     proposal = update_proposal(box, fitted) if fitted else None
             result.issues.append(
                 Issue("R05", severity, box.uid, box.frame,
                       f"Ít điểm LiDAR: {inside} < {required:.0f} ở {distance:.0f} m", evidence, proposal)
             )
         elif ring >= cfg["ring_min_points"] and ring > cfg["ring_ratio"] * inside:
-            fitted = propose_fit(box, observe(points, box, boxes, margin=box.scale[1] + 1.0))
+            obs = _observe(ctx, box, boxes, margin=box.scale[1] + 1.0)
+            fitted = propose_fit(box, obs, classes=cfg["classes"])
             result.issues.append(
                 Issue("R05", MAJOR, box.uid, box.frame,
                       f"Box có thể lệch: {ring} điểm sát ngoài so với {inside} điểm bên trong", evidence,
@@ -389,7 +441,9 @@ def r09_ground_contact(ctx: QcContext) -> RuleResult:
 
     result = RuleResult("R09", "checked")
     for box in boxes:
-        obs = observe(ctx.point_clouds[box.frame], box, boxes)
+        if box.distance > cfg["fit_max_distance"]:
+            continue  # too few road points far away to judge (PHENIKAA: most boxes beyond 40 m had none)
+        obs = _observe(ctx, box, boxes)
         if obs.ground_z is None:
             continue
         gap = (box.position[2] - box.scale[2] / 2) - obs.ground_z
@@ -398,9 +452,12 @@ def r09_ground_contact(ctx: QcContext) -> RuleResult:
         fixed = box.with_(position=(box.position[0], box.position[1], obs.ground_z + box.scale[2] / 2))
         result.issues.append(
             Issue("R09", MAJOR if abs(gap) > cfg["ground_major"] else MINOR, box.uid, box.frame,
-                  f"Box {'lơ lửng' if gap > 0 else 'chìm'} {abs(gap):.2f} m so với mặt đường",
-                  {"bottom_minus_ground": round(gap, 3), "ground_z": round(obs.ground_z, 3)},
-                  update_proposal(box, fixed))
+                  f"Box {'lơ lửng' if gap > 0 else 'chìm'} {abs(gap):.2f} m so với mặt đường"
+                  + ("" if obs.ground_flat else " (mặt đường dốc / gồ ghề: cần xem tay)"),
+                  {"bottom_minus_ground": round(gap, 3), "ground_z": round(obs.ground_z, 3),
+                   "ground_flat": obs.ground_flat},
+                  # a box is put on the road plane only where the road around it is a plane
+                  update_proposal(box, fixed) if obs.ground_flat else None)
         )
     return result
 
@@ -417,7 +474,7 @@ def r10_box_fit(ctx: QcContext) -> RuleResult:
     for box in boxes:
         if box.distance > cfg["fit_max_distance"]:
             continue
-        obs = observe(ctx.point_clouds[box.frame], box, boxes)
+        obs = _observe(ctx, box, boxes)
         if len(obs.points) < cfg["fit_min_points"]:
             continue
         gaps = visible_face_gaps(obs, box)
@@ -429,7 +486,7 @@ def r10_box_fit(ctx: QcContext) -> RuleResult:
             loose["height"] = round(gaps["height"], 2)
         if not loose:
             continue
-        fitted = propose_fit(box, obs, shrink=True)
+        fitted = propose_fit(box, obs, shrink=True, classes=cfg["classes"])
         names = {"length": "dài", "width": "rộng", "height": "cao"}
         result.issues.append(
             Issue("R10", MAJOR, box.uid, box.frame,
@@ -442,18 +499,19 @@ def r10_box_fit(ctx: QcContext) -> RuleResult:
 
 @rule("R11")
 def r11_class_by_size(ctx: QcContext) -> RuleResult:
-    """Class that does not match the box size under the VN class priors."""
+    """Class that does not match the box size under the guideline class priors."""
     cfg = ctx.config
-    candidates = [name for name in CLASSES]
+    classes = cfg["classes"]
+    candidates = list(classes)
     result = RuleResult("R11", "checked")
     boxes = _valid(ctx.cuboids)
     for box in boxes:
-        if box.label not in CLASSES:
+        if box.label not in classes:
             continue
         # 1) the LiDAR cluster cannot be this class (e.g. a motorbike labeled Truck)
         if box.frame in ctx.point_clouds and box.distance <= cfg["fit_max_distance"]:
-            obs = observe(ctx.point_clouds[box.frame], box, boxes)
-            from_points = class_from_points(obs, box)
+            obs = _observe(ctx, box, boxes)
+            from_points = class_from_points(obs, box, classes=classes)
             if from_points:
                 in_schema = from_points in cfg["labels"]
                 result.issues.append(
@@ -466,14 +524,15 @@ def r11_class_by_size(ctx: QcContext) -> RuleResult:
                 continue
             if len(obs.points) >= 150:
                 extent = obs.points.max(axis=0) - obs.points.min(axis=0)
-                if best_class_by_size(tuple(extent), candidates)[0] == box.label:
+                if best_class_by_size(tuple(extent), candidates, classes)[0] == box.label:
                     continue  # the object itself looks like its class: a wrong box size is R06 / R10
         # 2) the box size fits another class much better
-        best, _ = best_class_by_size(box.scale, candidates)
+        best, _ = best_class_by_size(box.scale, candidates, classes)
+        best = resolve_two_wheeler(best, box.scale[2], classes)
         if not best or best == box.label:
             continue
         # how much better the best class explains the size than the current one
-        margin = size_log_likelihood(CLASSES[best], box.scale) - size_log_likelihood(CLASSES[box.label], box.scale)
+        margin = size_log_likelihood(classes[best], box.scale) - size_log_likelihood(classes[box.label], box.scale)
         if margin < cfg["class_margin"]:
             continue
         in_schema = best in cfg["labels"]
@@ -488,58 +547,344 @@ def r11_class_by_size(ctx: QcContext) -> RuleResult:
     return result
 
 
-GEOMETRIC_RULES = {"R05", "R06", "R09", "R10", "R11"}
+@rule("R12")
+def r12_model(ctx: QcContext) -> RuleResult:
+    """Labels that disagree with the detection model, where the model is reliable (trusted classes, near)."""
+    cfg = ctx.config
+    if ctx.detections is None:
+        return RuleResult("R12", "not_checked", reason="chưa chạy model cho job (QC Check → Chạy model)")
+    trusted = [c for c in MODEL_TRUSTED_CLASSES if c in cfg["labels"]]
+    if not trusted:
+        return RuleResult("R12", "not_checked", reason="schema không có class model đáng tin (Car, Rider)")
+    by_frame = defaultdict(list)
+    for box in _valid(ctx.cuboids):
+        by_frame[box.frame].append(box)
+    result = RuleResult("R12", "checked")
+    for frame, detections in sorted(ctx.detections.items()):
+        missing = []
+        boxes = by_frame.get(frame, [])
+        centers = np.array([b.position[:2] for b in boxes]) if boxes else np.zeros((0, 2))
+        for detection in detections:
+            values, name, score = detection
+            if name not in trusted or math.hypot(values[0], values[1]) > cfg["model_max_distance"]:
+                continue
+            gaps = np.hypot(*(centers - np.asarray(values[:2])).T) if len(centers) else np.zeros(0)
+            near = [boxes[i] for i in np.flatnonzero(gaps <= cfg["model_match_distance"])]
+            if not near:
+                overlap = any(
+                    iou_3d(b, Cuboid("m", frame, name, tuple(values[:3]), (0, 0, values[6]), tuple(values[3:6]))) > 0.05
+                    for b in boxes if math.dist(b.position[:2], values[:2]) < 8
+                )
+                if score >= cfg["model_missing_score"] and not overlap:
+                    missing.append(Issue(
+                        "R12", MAJOR, f"m:{frame}:{round(values[0])}:{round(values[1])}", frame,
+                        f"Có thể thiếu nhãn: model thấy {name} (tin cậy {score:.2f}) "
+                        f"ở {math.hypot(values[0], values[1]):.0f} m, không có box nào",
+                        {"model_box": [round(float(v), 3) for v in values], "model_class": name,
+                         "score": round(float(score), 3)},
+                    ))
+                continue
+            box = min(near, key=lambda b: math.dist(b.position[:2], values[:2]))
+            if box.label == name or score < cfg["model_class_score"]:
+                continue
+            # the model also supports the labeled class there: no disagreement worth a reviewer's time
+            considered = (ctx.raw_detections or {}).get(frame, detections)
+            if any(other[1] == box.label and other[2] >= 0.3 and math.dist(other[0][:2], box.position[:2])
+                   <= cfg["model_match_distance"] for other in considered):
+                continue
+            result.issues.append(Issue(
+                "R12", MAJOR, box.uid, frame,
+                f"Model thấy {name} (tin cậy {score:.2f}), nhãn là {box.label}",
+                {"suggested": name, "source": "model", "score": round(float(score), 3), "in_schema": True},
+                update_proposal(box, box.with_(label=name)),
+            ))
+        if len(missing) > cfg["model_missing_per_frame"]:
+            # a frame that is mostly not labeled yet: one issue, not dozens
+            counts = defaultdict(int)
+            for issue in missing:
+                counts[issue.evidence["model_class"]] += 1
+            result.issues.append(Issue(
+                "R12", BLOCKER, f"m:{frame}:frame", frame,
+                f"Frame chưa gán nhãn đủ: model thấy {len(missing)} vật không có box ("
+                + ", ".join(f"{n} {c}" for c, n in sorted(counts.items())) + ")",
+                {"model_class": "", "missing": len(missing), "by_class": dict(counts),
+                 "model_boxes": [i.evidence["model_box"] + [i.evidence["model_class"], i.evidence["score"]]
+                                 for i in missing[:200]]},
+            ))
+        else:
+            result.issues.extend(missing)
+    return result
+
+
+@rule("R13")
+def r13_object_size(ctx: QcContext) -> RuleResult:
+    """Box shorter than its object: the same object is longer / wider in the other frames (qc/objects.py)."""
+    reference = _reference(ctx)
+    result = RuleResult("R13", "checked")
+    names = {"length": "dài", "width": "rộng"}
+    for box in _valid(ctx.cuboids):
+        ref = reference.get(box.uid)
+        if not ref or ref["label"] != box.label:
+            continue
+        short = too_short(box, ref["size"])
+        if not short:
+            continue
+        axes = [axis for axis, name in enumerate(("length", "width")) if name in short]
+        fixed = extend_to(box, ref["size"], axes=axes)
+        parts = [f"{names[name]} {box.scale[axis]:.2f} m, vật {names[name]} {ref['size'][axis]:.2f} m"
+                 for axis, name in enumerate(("length", "width")) if name in short]
+        result.issues.append(Issue(
+            "R13", MAJOR, box.uid, box.frame,
+            "Box ngắn hơn vật thật: " + "; ".join(parts) + f" (theo {ref['frames']} frame của cùng vật)",
+            {"short": short, "reference": [round(v, 3) for v in ref["size"]], "frames": ref["frames"]},
+            update_proposal(box, fixed),
+        ))
+    return result
+
+
+def _reference(ctx: QcContext) -> dict[str, dict]:
+    if ctx.reference is None:
+        ctx.reference = reference_sizes(_valid(ctx.cuboids), ctx.config["classes"])
+    return ctx.reference
+
+
+GEOMETRIC_RULES = {"R05", "R06", "R09", "R10", "R11", "R13"}
+
+
+REPAIR_RULES = GEOMETRIC_RULES | {"R04", "R12", "R14"}
+LIMIT_CHECK = "quá giới hạn tự sửa"  # auto-fix size limits: not a sign of a worse correction
+
+
+def _point_fix(ctx: QcContext, box: Cuboid, issues: list[Issue], boxes: list[Cuboid], label: str | None):
+    """Correction from the box's own LiDAR points (re-anchor, trim, ground), or None."""
+    cfg = ctx.config
+    if box.frame not in ctx.point_clouds or box.distance > cfg["fit_max_distance"]:
+        return None
+    points = ctx.point_clouds[box.frame]
+    inside = count_points(points, box, ground_clearance=cfg["ground_clearance"])
+    # search wider only when the box has lost its object
+    margin = 0.4 if inside >= cfg["fit_min_points"] else box.scale[1] + 1.0
+    obs = _observe(ctx, box, boxes, margin=margin)
+    if len(obs.points) < cfg["fit_min_points"]:
+        return None
+    rules = {issue.rule for issue in issues}
+    if rules == {"R14"}:
+        # marked by a reviewer, no rule says what is wrong: visible faces and road, size kept
+        return propose_fit(box, obs, classes=cfg["classes"]) if obs.ground_flat else None
+    gaps = next((i.evidence.get("gaps", {}) for i in issues if i.rule == "R10"), {})
+    shifted = "R05" in rules and inside < cfg["fit_min_points"] or any(
+        i.rule == "R05" and "lệch" in i.message for i in issues
+    )
+    return propose_object_fix(
+        box, obs,
+        label=label,
+        fix_xy=shifted,
+        trim_axes=tuple(axis for axis, name in enumerate(("length", "width")) if name in gaps),
+        fix_height="height" in gaps,
+        fix_ground="R09" in rules,
+        classes=cfg["classes"],
+    )
 
 
 def _consolidate_proposals(ctx: QcContext, results: list[RuleResult]) -> None:
-    """One consistent correction per object instead of one partial fix per rule."""
+    """
+    One complete correction per object instead of one partial fix per rule: candidates from the box's own
+    points, from the detection model's box of the same object and (class errors) a class change only are
+    each checked against the guideline (qc/verify.py); the one that fits the object best is proposed for
+    every issue of the object, so a single "fix" sets position, size, heading and class together.
+    """
+    from .repair import guideline_class, match_detections, model_refit
+
     cfg = ctx.config
     boxes = _valid(ctx.cuboids)
     by_uid = {b.uid: b for b in boxes}
+    reference = _reference(ctx)
     issues_by_uid = defaultdict(list)
     for result in results:
         for issue in result.issues:
-            if issue.rule in GEOMETRIC_RULES:
+            if issue.rule in REPAIR_RULES and not issue.uid.startswith("m:"):
                 issues_by_uid[issue.uid].append(issue)
+
+    matches = {}
+    if ctx.detections:
+        by_frame = defaultdict(list)
+        for box in boxes:
+            by_frame[box.frame].append(box)
+        for frame, detections in ctx.detections.items():
+            matches.update(match_detections(by_frame.get(frame, []), detections))
+    trusted = [c for c in MODEL_TRUSTED_CLASSES if c in cfg["labels"]]
 
     for uid, issues in issues_by_uid.items():
         box = by_uid.get(uid)
-        if box is None or box.frame not in ctx.point_clouds or box.distance > cfg["fit_max_distance"]:
+        if box is None:
             continue
-        points = ctx.point_clouds[box.frame]
-        inside = count_points(points, box, ground_clearance=cfg["ground_clearance"])
-        # search wider only when the box has lost its object
-        margin = 0.4 if inside >= cfg["fit_min_points"] else box.scale[1] + 1.0
-        obs = observe(points, box, boxes, margin=margin)
-        if len(obs.points) < cfg["fit_min_points"]:
-            continue
-        label = None
-        for issue in issues:
-            suggested = issue.evidence.get("suggested")
-            if issue.rule == "R11" and suggested and suggested in cfg["labels"]:
-                label = suggested
+        points = ctx.point_clouds.get(box.frame)
         rules = {issue.rule for issue in issues}
-        gaps = next((i.evidence.get("gaps", {}) for i in issues if i.rule == "R10"), {})
-        shifted = "R05" in rules and inside < cfg["fit_min_points"] or any(
-            i.rule == "R05" and "lệch" in i.message for i in issues
-        )
-        fixed = propose_object_fix(
-            box, obs,
-            label=label,
-            fix_xy=shifted or "length" in gaps or "width" in gaps,
-            fix_height="height" in gaps,
-            fix_ground="R09" in rules,
-        )
-        if fixed is None:
+        label = None
+        for issue in sorted(issues, key=lambda i: i.rule != "R12"):  # R11 (points / size) wins over R12
+            suggested = issue.evidence.get("suggested")
+            if issue.rule in ("R11", "R12") and suggested and suggested in cfg["labels"]:
+                label = suggested
+        candidates = []  # (method, corrected box, preference: lower first)
+        geometric = bool(rules & {"R05", "R06", "R09", "R10", "R13", "R14"})
+        fitted = _point_fix(ctx, box, issues, boxes, label)
+        # measured on injected errors: the point fit is the more accurate one when it passes the checks;
+        # the model's box rebuilds what the points cannot (box on the wrong spot, wrong size or class)
+        if fitted is not None:
+            candidates.append(("points", fitted, 0))
+        detection = matches.get(uid)
+        model_class = None
+        # the model rebuilds a box only where it was measured reliable (trusted classes, within range)
+        if detection is not None and (
+            (detection[1] not in trusted and "R14" not in rules)
+            or math.hypot(*detection[0][:2]) > cfg["model_max_distance"]
+        ):
+            detection = None  # a reviewer's mark asks for the model on any class, still within range
+        if detection is not None:
+            refit = model_refit(box, detection, points, cfg, trusted)
+            # a class change is the model's call only for the object the label was drawn on: a box shifted
+            # onto a neighbour must not take the neighbour's class
+            inside = box.with_(scale=(box.scale[0] + 0.6, box.scale[1] + 0.6, box.scale[2] + 10))
+            if refit.label == box.label or count_points(np.asarray([detection[0][:3]], np.float32), inside):
+                # a reviewer who marked the box asked for the model's box first
+                candidates.append(("model", refit, -1 if "R14" in rules else 1))
+                model_class = refit.label
+        if label and label != box.label:
+            candidates.append(("class", box.with_(label=label), 0 if not geometric else 2))
+        elif detection is not None and not geometric:
+            model_label = guideline_class(box.label, detection, cfg, trusted)
+            if model_label != box.label:
+                candidates.append(("class", box.with_(label=model_label), 0))
+        if "R04" in rules:
+            candidates = [(m, c.with_(rotation=(0.0, 0.0, wrap_angle(c.yaw))), p) for m, c, p in candidates] or [
+                ("rotation", box.with_(rotation=(0.0, 0.0, wrap_angle(box.yaw))), 0)
+            ]
+        ref = reference.get(uid)
+        if "R13" in rules and ref:
+            candidates.append(("size", extend_to(box, ref["size"]), 1))
+        if ref and ref["label"] == box.label:
+            # no correction makes a box shorter than its object (the LiDAR seldom sees the far side)
+            candidates = [(m, extend_to(c, ref["size"]) if c.label == box.label else c, p) for m, c, p in candidates]
+        if not candidates:
+            for issue in issues:
+                if issue.rule == "R14":
+                    issue.evidence["no_fix"] = "không có điểm LiDAR hay box model đủ tin để sửa"
+            continue
+
+        def cost(candidate) -> tuple:
+            failed = verify_fix(box, candidate[1], boxes, points, cfg, model_class)
+            return len([f for f in failed if LIMIT_CHECK not in f]), candidate[2]
+
+        method, fixed, _ = min(candidates, key=cost)
+        if cost((method, fixed, 0))[0] and box.distance <= cfg["fit_max_distance"] and points is not None and (
+            count_points(points, box, margin=0.2, ground_clearance=cfg["ground_clearance"]) < 10
+        ):
+            # nothing to fit and no valid correction: a box drawn on empty space (reviewer decides)
+            proposal = {"kind": "delete", "summary": "Xoá box: gần như không có điểm LiDAR, không phải vật thể"}
+            for issue in issues:
+                issue.proposal = proposal
             continue
         proposal = update_proposal(box, fixed)
         if not proposal["changes"]:
             continue
+        proposal["method"] = method
+        if model_class:
+            proposal["model_class"] = model_class
+        proposal["summary"] = f"{proposal['summary']} · theo {dict(points='điểm LiDAR', model='model', size='kích thước vật qua các frame', **{'class': 'class', 'rotation': 'góc'})[method]}"
         for issue in issues:
             issue.proposal = proposal
 
 
+def _create_proposals(ctx: QcContext, results: list[RuleResult]) -> None:
+    """New boxes for objects the model sees with no label (R12): each one checked before auto-fix may add it."""
+    from .repair import create_shape, new_box, verify_create
+
+    cfg = ctx.config
+    boxes = _valid(ctx.cuboids)
+    for result in results:
+        if result.rule != "R12":
+            continue
+        for issue in result.issues:
+            if not issue.uid.startswith("m:"):
+                continue
+            points = ctx.point_clouds.get(issue.frame)
+            items = issue.evidence.get("model_boxes") or [
+                issue.evidence["model_box"] + [issue.evidence["model_class"], issue.evidence["score"]]
+            ]
+            shapes, refused, created = [], [], []
+            for n, item in enumerate(items):
+                values, name, score = item[:7], item[7], item[8]
+                box = new_box((values, name, score), issue.frame, f"{issue.uid}:{n}", points, cfg)
+                failed = verify_create(box, boxes + created, points, cfg)
+                if failed:
+                    refused.append(f"{name} ({score:.2f}): {failed[0]}")
+                    continue
+                created.append(box)
+                shapes.append(create_shape(box, score))
+            if not shapes:
+                issue.evidence["create_refused"] = refused[:20]
+                continue
+            counts = defaultdict(int)
+            for shape in shapes:
+                counts[shape["label"]] += 1
+            issue.proposal = {
+                "kind": "create",
+                "shapes": shapes,
+                "summary": "Thêm " + ", ".join(f"{n} {c}" for c, n in sorted(counts.items()))
+                + (f" (bỏ {len(refused)} chưa chắc)" if refused else ""),
+                "verified": True,
+                "kinds": ["create"],
+                "checks": refused[:20],
+                "method": "model",
+            }
+
+
+def _verify_proposals(ctx: QcContext, results: list[RuleResult]) -> None:
+    """
+    Mark each proposal verified (auto-fix may write it) or not, with the failed checks (qc/verify.py),
+    and the kinds of change it makes (guideline autofix.fix).
+    """
+    boxes = _valid(ctx.cuboids)
+    by_uid = {b.uid: b for b in boxes}
+    done = set()
+    for result in results:
+        for issue in result.issues:
+            proposal = issue.proposal
+            if not proposal or id(proposal) in done:
+                continue
+            done.add(id(proposal))
+            box = by_uid.get(issue.uid)
+            if proposal["kind"] == "create":
+                continue  # checked when it was made (_create_proposals)
+            if proposal["kind"] == "delete" or box is None:
+                proposal.update(verified=False, kinds=["delete"], checks=["xoá box: QC cần xem trước khi xoá"])
+                continue
+            fixed = apply_changes(box, proposal["changes"])
+            failed = verify_fix(box, fixed, boxes, ctx.point_clouds.get(box.frame), ctx.config,
+                                proposal.get("model_class"))
+            proposal.update(verified=not failed, kinds=change_kinds(box, fixed), checks=failed)
+
+
 def run_rules(ctx: QcContext, codes: list[str] | None = None) -> list[RuleResult]:
-    results = [RULES[code](ctx) for code in (codes or sorted(RULES))]
+    from .repair import dedupe_detections
+
+    if ctx.detections:
+        # the model unsure between two classes gives one object two boxes: keep the more confident one
+        ctx.raw_detections = ctx.detections
+        ctx.detections = {frame: dedupe_detections(items) for frame, items in ctx.detections.items()}
+    disabled = set(ctx.config.get("disabled_rules", ()))
+    results = [
+        RuleResult(code, "not_checked", reason="tắt theo guideline") if code in disabled else RULES[code](ctx)
+        for code in (codes or sorted(RULES))
+    ]
+    if ctx.marked:
+        marked = RuleResult("R14", "checked")
+        marked.issues = [
+            Issue("R14", MAJOR, box.uid, box.frame, "Người duyệt đánh dấu nhãn lỗi", {"source": "reviewer"})
+            for box in _valid(ctx.cuboids) if box.uid in ctx.marked
+        ]
+        results.append(marked)
     _consolidate_proposals(ctx, results)
+    _create_proposals(ctx, results)
+    _verify_proposals(ctx, results)
     return results

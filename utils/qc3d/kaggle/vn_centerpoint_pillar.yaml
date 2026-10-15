@@ -1,0 +1,105 @@
+# CenterPoint (pillar) for the VN classes. Fits a 16 GB GPU (Kaggle T4 / P100) at batch size 4.
+# Same layers as OpenPCDet's nuScenes cbgs_dyn_pp_centerpoint, so it is fine-tuned from those weights
+# (static PillarVFE instead of DynPillarVFE: same parameters, no torch_scatter needed).
+#
+# v2: the model learns 4 groups the data supports well; QC splits them with the guideline rules, as R11:
+#   LargeVehicle -> Truck / Bus by size (PHENIKAA has no Truck / Bus labels: they come from the box size,
+#                   so the model cannot learn a better split; v1 found 100 % of near trucks but called them Bus)
+#   TwoWheeler   -> Rider / Motorbike by height (only 108 parked two-wheelers to train a Motorbike class)
+# The notebook maps the label names of the training set (vn_dataset.yaml CLASS_GROUPS): no new upload.
+CLASS_NAMES: ['Car', 'LargeVehicle', 'TwoWheeler', 'Pedestrian']
+
+DATA_CONFIG:
+    _BASE_CONFIG_: cfgs/dataset_configs/vn_dataset.yaml
+
+MODEL:
+    NAME: CenterPoint
+
+    VFE:
+        NAME: PillarVFE
+        WITH_DISTANCE: False
+        USE_ABSLOTE_XYZ: True
+        USE_NORM: True
+        NUM_FILTERS: [64, 64]
+
+    MAP_TO_BEV:
+        NAME: PointPillarScatter
+        NUM_BEV_FEATURES: 64
+
+    BACKBONE_2D:
+        NAME: BaseBEVBackbone
+        LAYER_NUMS: [3, 5, 5]
+        LAYER_STRIDES: [2, 2, 2]
+        NUM_FILTERS: [64, 128, 256]
+        UPSAMPLE_STRIDES: [0.5, 1, 2]
+        NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+
+    DENSE_HEAD:
+        NAME: CenterHead
+        CLASS_AGNOSTIC: False
+        # classes of similar size share a head
+        CLASS_NAMES_EACH_HEAD: [
+            ['Car'],
+            ['LargeVehicle'],
+            ['TwoWheeler'],
+            ['Pedestrian'],
+        ]
+        SHARED_CONV_CHANNEL: 64
+        USE_BIAS_BEFORE_NORM: True
+        NUM_HM_CONV: 2
+        SEPARATE_HEAD_CFG:
+            HEAD_ORDER: ['center', 'center_z', 'dim', 'rot']
+            HEAD_DICT: {
+                'center': {'out_channels': 2, 'num_conv': 2},
+                'center_z': {'out_channels': 1, 'num_conv': 2},
+                'dim': {'out_channels': 3, 'num_conv': 2},
+                'rot': {'out_channels': 2, 'num_conv': 2},
+            }
+
+        TARGET_ASSIGNER_CONFIG:
+            FEATURE_MAP_STRIDE: 4
+            NUM_MAX_OBJS: 500
+            GAUSSIAN_OVERLAP: 0.1
+            MIN_RADIUS: 2
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 0.25,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+
+        POST_PROCESSING:
+            SCORE_THRESH: 0.1
+            POST_CENTER_LIMIT_RANGE: [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+            MAX_OBJ_PER_SAMPLE: 500
+            NMS_CONFIG:
+                NMS_TYPE: nms_gpu
+                NMS_THRESH: 0.2
+                NMS_PRE_MAXSIZE: 1000
+                NMS_POST_MAXSIZE: 200  # per head; dense VN traffic: 83 cut the two-wheelers
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        EVAL_METRIC: kitti
+
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 4
+    NUM_EPOCHS: 30  # v1 loss still went down at epoch 20
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.001  # fine-tuning from nuScenes weights
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10

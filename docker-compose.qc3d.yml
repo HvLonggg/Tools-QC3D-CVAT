@@ -11,6 +11,9 @@
 
 services:
   cvat_server:
+    environment:
+      # One Django worker leaves RAM available for the browser's 3D canvas.
+      NUMPROCS: 1
     volumes:
       - ./cvat/apps/qc3d:/opt/cvat/cvat/apps/qc3d:ro
       - ./cvat/settings/base.py:/opt/cvat/cvat/settings/base.py:ro
@@ -28,3 +31,43 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ui
+
+  # Default: viewing existing 3D jobs, annotation, QC and AutoFix.
+  # Add --profile data for task creation / import / export;
+  # --profile ai for automatic model annotation; --profile full for all workers.
+  # unless-stopped keeps optional workers off after restarting Docker Desktop.
+  # ClickHouse / Vector stay because the backend uses event logging.
+  cvat_worker_chunks:
+    environment:
+      NUMPROCS: 1
+  # Background analytics merges should not monopolize CPU on this laptop.
+  cvat_clickhouse:
+    cpus: 0.5
+  cvat_worker_import:
+    environment:
+      NUMPROCS: 1
+    profiles: ["data", "full"]
+    restart: unless-stopped
+  cvat_worker_export:
+    environment:
+      NUMPROCS: 1
+    profiles: ["data", "full"]
+    restart: unless-stopped
+  cvat_worker_annotation:
+    profiles: ["ai", "full"]
+    restart: unless-stopped
+  cvat_worker_utils:
+    profiles: ["maintenance", "full"]
+    restart: unless-stopped
+  cvat_grafana:
+    profiles: ["full"]
+    restart: unless-stopped
+  cvat_worker_webhooks:
+    profiles: ["full"]
+    restart: unless-stopped
+  cvat_worker_quality_reports:
+    profiles: ["full"]
+    restart: unless-stopped
+  cvat_worker_consensus:
+    profiles: ["full"]
+    restart: unless-stopped

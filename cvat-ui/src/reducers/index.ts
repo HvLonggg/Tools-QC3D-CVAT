@@ -447,6 +447,11 @@ export interface PluginsState {
             menuActions: {
                 items: PluginComponent[];
             };
+            objectsSideBar: {
+                tabs: {
+                    items: PluginComponent[];
+                };
+            };
         }
         taskPage: {
             details: {

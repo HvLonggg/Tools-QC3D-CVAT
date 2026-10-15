@@ -20,6 +20,14 @@ import { collapseSidebar as collapseSidebarAction } from 'actions/annotation-act
 import AppearanceBlock from 'components/annotation-page/appearance-block';
 import IssuesListComponent from 'components/annotation-page/standard-workspace/objects-side-bar/issues-list';
 import { OBJECTS_SIDEBAR_OPEN_Z_LAYER_EVENT } from 'utils/objects-sidebar';
+import { usePlugins } from 'utils/hooks';
+
+interface TabItem {
+    key: string;
+    label: React.ReactNode;
+    children: React.ReactNode;
+    forceRender?: boolean;
+}
 
 interface OwnProps {
     objectsList: JSX.Element;
@@ -61,6 +69,12 @@ function ObjectsSideBar(props: StateToProps & DispatchToProps & OwnProps): JSX.E
         sidebarCollapsed, collapseSidebar, objectsList, jobInstance,
     } = props;
     const [activeTab, setActiveTab] = useState('objects');
+    useEffect(() => {
+        if (jobInstance?.dimension === DimensionType.DIMENSION_3D &&
+            new URLSearchParams(window.location.search).has('qcFocus')) {
+            setActiveTab('qc3d-check');
+        }
+    }, [jobInstance]);
     useEffect((): () => void => {
         const onOpenZLayer = (): void => {
             setActiveTab('objects');
@@ -88,6 +102,15 @@ function ObjectsSideBar(props: StateToProps & DispatchToProps & OwnProps): JSX.E
 
         collapseSidebar();
     };
+
+    const pluginTabs = usePlugins(
+        (state: CombinedState) => state.plugins.components.annotationPage.objectsSideBar.tabs.items,
+        props,
+    );
+    // a plugin tab component returns an antd tab item ({ key, label, children }) or null
+    const pluginTabItems = pluginTabs
+        .map(({ component }) => (component as (p: { targetProps: object }) => TabItem | null)({ targetProps: props }))
+        .filter((item): item is TabItem => !!item);
 
     const is2D = jobInstance ? jobInstance.dimension === DimensionType.DIMENSION_2D : true;
     return (
@@ -123,7 +146,8 @@ function ObjectsSideBar(props: StateToProps & DispatchToProps & OwnProps): JSX.E
                     label: 'Labels',
                     forceRender: true,
                     children: <LabelsList />,
-                }, ...(is2D ? [{ key: 'issues', label: 'Issues', children: <IssuesListComponent /> }] : [])]}
+                }, ...(is2D ? [{ key: 'issues', label: 'Issues', children: <IssuesListComponent /> }] : []),
+                ...pluginTabItems]}
             />
             {!sidebarCollapsed && <AppearanceBlock />}
         </Layout.Sider>

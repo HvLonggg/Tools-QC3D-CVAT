@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import weakref
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -48,6 +49,48 @@ def wrap_angle(angle: float) -> float:
     return wrapped - math.pi
 
 
+_INDEX: dict[int, tuple] = {}  # id(points) -> (weak ref, order by grid cell, sorted cell keys, grid origin)
+INDEX_CELL = 4.0  # m
+
+
+def crop(points: np.ndarray, x: float, y: float, radius: float) -> np.ndarray:
+    """
+    Points within `radius` (square) of (x, y). Each box needs only the points around it: rotating the whole
+    cloud (~260k points) for every box made a QC run take minutes. The cloud is indexed once on a 4 m grid
+    (kept while the cloud array lives); a query reads the few cells around the box.
+    """
+    if len(points) < 50000:  # a crop of a crop: filtering directly is cheaper than an index
+        keep = (np.abs(points[:, 0] - x) <= radius) & (np.abs(points[:, 1] - y) <= radius)
+        return points if keep.all() else points[keep]
+    key = id(points)
+    hit = _INDEX.get(key)
+    if hit is None or hit[0]() is not points:
+        finite = np.isfinite(points[:, 0]) & np.isfinite(points[:, 1])
+        x0, y0 = float(points[finite, 0].min()), float(points[finite, 1].min())
+        cells = np.floor((np.nan_to_num(points[:, :2], nan=-1e9) - (x0, y0)) / INDEX_CELL).astype(np.int64)
+        ny = int(cells[finite, 1].max()) + 1
+        keys = np.where(finite, cells[:, 0] * ny + cells[:, 1], -1)
+        order = np.argsort(keys, kind="stable")
+        hit = (weakref.ref(points, lambda _ref, k=key: _INDEX.pop(k, None)), order, keys[order], (x0, y0, ny))
+        _INDEX[key] = hit
+    _, order, keys, (x0, y0, ny) = hit
+    ix0, ix1 = (int(math.floor((v - x0) / INDEX_CELL)) for v in (x - radius, x + radius))
+    iy0, iy1 = (min(max(int(math.floor((v - y0) / INDEX_CELL)), 0), ny - 1) for v in (y - radius, y + radius))
+    parts = []
+    for ix in range(max(ix0, 0), ix1 + 1):
+        lo, hi = np.searchsorted(keys, [ix * ny + iy0, ix * ny + iy1 + 1])
+        if hi > lo:
+            parts.append(order[lo:hi])
+    if not parts:
+        return points[:0]
+    near = points[np.concatenate(parts)]
+    return near[(np.abs(near[:, 0] - x) <= radius) & (np.abs(near[:, 1] - y) <= radius)]
+
+
+def box_crop(points: np.ndarray, box: "Cuboid", margin: float) -> np.ndarray:
+    return crop(points, box.position[0], box.position[1], math.hypot(box.scale[0], box.scale[1]) / 2 + margin)
+
+
 def to_local(points: np.ndarray, box: Cuboid) -> np.ndarray:
     """Points (N,>=3) expressed in the box frame (yaw only; roll/pitch are checked by R04)."""
     d = points[:, :3] - np.asarray(box.position, dtype=np.float32)
@@ -59,7 +102,7 @@ def count_points(
     points: np.ndarray, box: Cuboid, *, margin: float = 0.0, ground_clearance: float = 0.0
 ) -> int:
     """Points inside the box grown horizontally by `margin`, ignoring the lowest `ground_clearance` m."""
-    local = to_local(points, box)
+    local = to_local(box_crop(points, box, margin + 0.5), box)
     length, width, height = box.scale
     mask = (
         (np.abs(local[:, 0]) <= length / 2 + margin)
@@ -82,25 +125,25 @@ def bev_corners(box: Cuboid) -> np.ndarray:
 def _clip(subject: list, a: np.ndarray, b: np.ndarray) -> list:
     """Sutherland-Hodgman: keep the part of `subject` left of edge a->b."""
 
-    def inside(p):
-        return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0
+    def side(p):
+        return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
 
-    def intersect(p, q):
-        dp, dq = p - q, a - b
-        n1 = (a[0] * b[1] - a[1] * b[0])
-        n2 = (p[0] * q[1] - p[1] * q[0])
-        denom = dq[0] * dp[1] - dq[1] * dp[0]
-        return np.array([(n1 * dp[0] - n2 * dq[0]) / denom, (n1 * dp[1] - n2 * dq[1]) / denom])
+    def intersect(p, q, sp, sq):
+        # interpolate by the signed distances (opposite signs): stable when the edges are almost
+        # parallel, where a line-line intersection divides by ~0 (boxes with the same yaw)
+        t = sp / (sp - sq)
+        return p + (q - p) * t
 
     output = []
     for i, current in enumerate(subject):
         previous = subject[i - 1]
-        if inside(current):
-            if not inside(previous):
-                output.append(intersect(previous, current))
+        sc, sp = side(current), side(previous)
+        if sc >= 0:
+            if sp < 0:
+                output.append(intersect(previous, current, sp, sc))
             output.append(current)
-        elif inside(previous):
-            output.append(intersect(previous, current))
+        elif sp >= 0:
+            output.append(intersect(previous, current, sp, sc))
     return output
 
 
@@ -135,8 +178,11 @@ def iou_3d(a: Cuboid, b: Cuboid) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def read_pcd(path: str | Path) -> np.ndarray:
-    """Read x, y, z from an ascii or binary PCD file (the formats CVAT stores)."""
+def read_pcd(path: str | Path, *, with_intensity: bool = False) -> np.ndarray:
+    """
+    Read x, y, z (and intensity on the 0-255 scale, 0 when the file has none) from an ascii or binary
+    PCD file (the formats CVAT stores).
+    """
     with open(path, "rb") as f:
         header = {}
         while True:
@@ -157,10 +203,19 @@ def read_pcd(path: str | Path) -> np.ndarray:
         n_points = int(header["POINTS"])
         data_kind = header["DATA"].lower()
         columns = [fields.index(name) for name in ("x", "y", "z")]
+        intensity_field = next((name for name in ("intensity", "i") if name in fields), None)
+
+        def with_extra(xyz: np.ndarray, intensity) -> np.ndarray:
+            if not with_intensity:
+                return xyz
+            values = np.zeros(len(xyz), np.float32) if intensity is None else np.asarray(intensity, np.float32)
+            if values.size and values.max() > 255:
+                values = values * (255.0 / 65535.0)
+            return np.column_stack([xyz, values]).astype(np.float32)
 
         if data_kind == "ascii":
             table = np.loadtxt(f, dtype=np.float32, max_rows=n_points, ndmin=2)
-            return table[:, columns]
+            return with_extra(table[:, columns], table[:, fields.index(intensity_field)] if intensity_field else None)
         if data_kind != "binary":
             raise ValueError(f"{path}: unsupported PCD DATA '{data_kind}'")
 
@@ -172,4 +227,5 @@ def read_pcd(path: str | Path) -> np.ndarray:
             ]
         )
         records = np.frombuffer(f.read(dtype.itemsize * n_points), dtype=dtype, count=n_points)
-        return np.column_stack([records[name].astype(np.float32) for name in ("x", "y", "z")])
+        xyz = np.column_stack([records[name].astype(np.float32) for name in ("x", "y", "z")])
+        return with_extra(xyz, records[intensity_field] if intensity_field else None)

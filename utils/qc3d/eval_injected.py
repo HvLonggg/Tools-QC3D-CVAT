@@ -43,7 +43,7 @@ def load(data_dir: Path) -> tuple[list[Cuboid], dict[int, np.ndarray]]:
             frame = names.index(f"{item['id']}.pcd")
             raw = z.read(f"{item['id']}.pcd")
             header_end = raw.index(b"DATA binary\n") + len(b"DATA binary\n")
-            point_clouds[frame] = np.frombuffer(raw[header_end:], dtype="<f4").reshape(-1, 4)[:, :3]
+            point_clouds[frame] = np.frombuffer(raw[header_end:], dtype="<f4").reshape(-1, 4)  # x y z intensity
             for ann in item["annotations"]:
                 cuboids.append(
                     Cuboid(
@@ -72,15 +72,43 @@ def apply_proposal(box: Cuboid, proposal: dict) -> Cuboid | None:
     return box.with_(**changes)
 
 
+def load_detections(args, cuboids, point_clouds) -> dict:
+    """Model detections per frame, cached next to the data (the model takes ~5 s per frame on a CPU)."""
+    import pickle
+
+    cache = args.data / f"detections_{args.model.stem}.pkl"
+    if cache.exists():
+        return pickle.loads(cache.read_bytes())
+    from cvat.apps.qc3d.qc.detector import Detector
+
+    detector = Detector.from_file(args.model)
+    bottoms = [c.position[2] - c.scale[2] / 2 for c in cuboids if c.distance < 30]
+    ground = float(np.median(bottoms))
+    detections = {}
+    for n, (frame, points) in enumerate(sorted(point_clouds.items()), 1):
+        points = points.copy()
+        if points[:, 3].max(initial=0) > 255:  # LAZ intensity 0-65535 -> the model's 0-255
+            points[:, 3] *= 255.0 / 65535.0
+        detections[frame] = [
+            ([float(v) for v in d.box], d.label, d.score) for d in detector.predict(points, ground_z=ground) if d.score >= 0.3
+        ]
+        print(f"  model {n}/{len(point_clouds)}", flush=True)
+    cache.write_bytes(pickle.dumps(detections))
+    return detections
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--seeds", type=int, default=10)
     parser.add_argument("--per-kind", type=int, default=5)
+    parser.add_argument("--model", type=Path, help="detector weights (.npz / .pth): also measure model-based fixes")
     args = parser.parse_args()
 
     cuboids, point_clouds = load(args.data)
-    baseline = run_rules(QcContext(cuboids, point_clouds))
+    detections = load_detections(args, cuboids, point_clouds) if args.model else None
+    point_clouds = {f: p[:, :3] for f, p in point_clouds.items()}
+    baseline = run_rules(QcContext(cuboids, point_clouds, detections=detections))
     baseline_keys = issue_keys(baseline)
 
     print(f"objects: {len(cuboids)} | frames with point cloud: {len(point_clouds)}")
@@ -94,9 +122,13 @@ def main() -> None:
     missed_examples = defaultdict(list)
     originals = {c.uid: c for c in cuboids}
     fix_stats = defaultdict(lambda: {"proposals": 0, "iou_before": [], "iou_after": [], "label_ok": 0})
+    # auto-fix writes only verified proposals: their quality, and what they would change on untouched objects
+    auto_stats = defaultdict(lambda: {"verified": 0, "iou_before": [], "iou_after": [], "label_ok": 0})
+    auto_untouched = Counter()
+    auto_checks = Counter()
     for seed in range(args.seeds):
         boxes, errors = inject(cuboids, point_clouds, per_kind=args.per_kind, seed=seed)
-        results = run_rules(QcContext(boxes, point_clouds))
+        results = run_rules(QcContext(boxes, point_clouds, detections=detections))
         keys = issue_keys(results)
         current = {b.uid: b for b in boxes}
         proposals = defaultdict(list)
@@ -116,9 +148,27 @@ def main() -> None:
                 continue
             fixed = apply_proposal(current[error.uid], proposal)
             original = originals[error.uid]
+            if proposal.get("verified") and fixed:
+                auto = auto_stats[error.kind]
+                auto["verified"] += 1
+                auto["iou_before"].append(iou_3d(current[error.uid], original))
+                auto["iou_after"].append(iou_3d(fixed, original))
+                auto["label_ok"] += fixed.label == original.label
+                if auto["iou_after"][-1] < max(0.7, auto["iou_before"][-1]) or fixed.label != original.label:
+                    auto.setdefault("bad", []).append(
+                        f"seed {seed} {error.uid} ({error.detail}): IoU {auto['iou_before'][-1]:.2f} → "
+                        f"{auto['iou_after'][-1]:.2f}, {proposal['summary']}, cách {original.distance:.0f} m"
+                    )
+            else:
+                auto_checks.update(c.split(" ")[0] + " " + c.split(" ")[1] for c in proposal.get("checks", [])[:1])
             stats["iou_before"].append(iou_3d(current[error.uid], original))
             stats["iou_after"].append(iou_3d(fixed, original) if fixed else 0.0)
             stats["label_ok"] += bool(fixed) and fixed.label == original.label
+            if fixed and fixed.label != original.label:
+                stats.setdefault("label_wrong", []).append(
+                    f"seed {seed} {error.uid}: {original.label} -> {current[error.uid].label} -> "
+                    f"{fixed.label} (cao {original.scale[2]:.2f} m, cách {original.distance:.0f} m)"
+                )
         injected_uids = {e.uid for e in errors} | {e.uid.split(":dup")[0] for e in errors}
         for error in errors:
             total[error.kind] += 1
@@ -126,6 +176,9 @@ def main() -> None:
                 caught[error.kind] += 1
             elif len(missed_examples[error.kind]) < 3:
                 missed_examples[error.kind].append(f"seed {seed} {error.uid} ({error.detail})")
+        for uid, items in proposals.items():
+            if uid not in injected_uids and any(p.get("verified") for _, p in items):
+                auto_untouched["objects"] += 1
         for code, uid in keys - baseline_keys:
             if uid not in injected_uids:
                 false_alarms[code] += 1
@@ -155,6 +208,27 @@ def main() -> None:
             f" → after {after.mean():.2f} (median {np.median(after):.2f}, ≥0.7: {np.mean(after >= 0.7):.0%})"
             f"  class ok {s['label_ok']}/{s['proposals']}"
         )
+        for line in s.get("label_wrong", []):
+            print(f"      class sai: {line}")
+
+    print("\n== Autofix (only verified proposals are written)")
+    for kind in FIXABLE:
+        if kind == "duplicate":
+            continue
+        a, s = auto_stats[kind], fix_stats[kind]
+        if not a["iou_after"]:
+            print(f"  {kind:14s} verified   0/{s['proposals']}")
+            continue
+        after, before = np.array(a["iou_after"]), np.array(a["iou_before"])
+        print(
+            f"  {kind:14s} verified {a['verified']:3d}/{s['proposals']}  IoU {before.mean():.2f} → {after.mean():.2f}"
+            f" (≥0.7: {np.mean(after >= 0.7):.0%}, ≥0.8: {np.mean(after >= 0.8):.0%}, worse: {np.sum(after < before)})"
+            f"  class ok {a['label_ok']}/{a['verified']}"
+        )
+        for line in a.get("bad", [])[:6]:
+            print(f"      chưa tốt: {line}")
+    print(f"  verified proposals on untouched objects (natural label findings): {auto_untouched['objects']}")
+    print(f"  most common failed check of unverified proposals: {auto_checks.most_common(6)}")
 
 
 if __name__ == "__main__":

@@ -13,3 +13,5 @@ class Qc3dConfig(AppConfig):
         from cvat.apps.iam.permissions import load_app_iam_rules
 
         load_app_iam_rules(self)
+
+        from . import signals  # noqa: F401  (job assignee / stage history)

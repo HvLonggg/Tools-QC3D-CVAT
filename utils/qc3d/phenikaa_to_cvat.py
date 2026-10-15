@@ -105,9 +105,11 @@ def range_bin(distance: float) -> str:
     return "other"
 
 
-def convert(scene: Path, out: Path, labeled_only: bool, max_frames: int | None) -> dict:
+def convert(scene: Path, out: Path, labeled_only: bool, max_frames: int | None, label_dir: str = "label") -> dict:
     lidar_files = sorted((scene / "lidar").glob("*.laz"))
     label_files = {p.stem: p for p in sorted((scene / "label").glob("*.txt"))}
+    # another label folder (label_review: original + proposed labels) overrides the original per frame
+    label_files.update({p.stem: p for p in sorted((scene / label_dir).glob("*.txt"))} if label_dir != "label" else {})
     pose_files = {p.stem: p for p in sorted((scene / "ego_pose").glob("*.txt"))}
     if not lidar_files:
         raise SystemExit(f"No LiDAR frames in {scene / 'lidar'}")
@@ -213,9 +215,11 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True, help="output dir")
     parser.add_argument("--labeled-only", action="store_true", help="export only frames that have labels")
     parser.add_argument("--max-frames", type=int, default=None, help="limit the number of frames")
+    parser.add_argument("--label-dir", default="label",
+                        help="label folder of the scene (label_review: original + proposed labels to verify)")
     args = parser.parse_args()
 
-    report = convert(args.scene, args.out, args.labeled_only, args.max_frames)
+    report = convert(args.scene, args.out, args.labeled_only, args.max_frames, args.label_dir)
     print(json.dumps(report, indent=1, ensure_ascii=False))
 
 

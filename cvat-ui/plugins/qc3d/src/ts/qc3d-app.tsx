@@ -2,53 +2,134 @@
 //
 // SPDX-License-Identifier: MIT
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
-    Route, Switch, useHistory, useLocation,
+    Link, Route, Switch, useHistory, useLocation,
 } from 'react-router-dom';
+import {
+    AppstoreOutlined, ArrowLeftOutlined, AuditOutlined, CheckSquareOutlined, FileTextOutlined,
+    QuestionCircleOutlined, SafetyCertificateOutlined, TagsOutlined, TeamOutlined, TrophyOutlined,
+} from '@ant-design/icons';
+import Breadcrumb from 'antd/lib/breadcrumb';
+import Button from 'antd/lib/button';
+import ConfigProvider from 'antd/lib/config-provider';
 import Menu from 'antd/lib/menu';
+import Modal from 'antd/lib/modal';
 
 import DashboardPage, { ReviewPage } from './pages/dashboard';
 import JobPage from './pages/job-page';
 import AdminPage from './pages/admin';
 import TaxonomyPage from './pages/taxonomy';
+import GuidelinesPage from './pages/guidelines';
+import GuidelineEditorPage from './pages/guideline-editor';
 import PlannedPage from './pages/planned';
+import MyWorkPage from './pages/my-work';
+import useSummary from './use-summary';
+import './styles.scss';
 
+// `team`: only for people with a QC role (lead / reviewer / QA) or CVAT admins; data is also enforced by the API
 const SECTIONS = [
-    { key: '/qc3d', label: 'Tổng quan' },
-    { key: '/qc3d/review', label: 'Review' },
-    { key: '/qc3d/qa', label: 'Nghiệm thu QA' },
-    { key: '/qc3d/classes', label: 'Class VN' },
-    { key: '/qc3d/admin', label: 'Quản trị' },
+    { key: '/qc3d', label: 'Tổng quan', icon: <AppstoreOutlined />, team: false },
+    { key: '/qc3d/my', label: 'Chất lượng của tôi', icon: <TrophyOutlined />, team: false },
+    { key: '/qc3d/review', label: 'Hàng đợi review', icon: <AuditOutlined />, team: true },
+    { key: '/qc3d/qa', label: 'Nghiệm thu QA', icon: <CheckSquareOutlined />, team: true },
+    { key: '/qc3d/guidelines', label: 'Guideline QC', icon: <FileTextOutlined />, team: false },
+    { key: '/qc3d/classes', label: 'Bộ class Việt Nam', icon: <TagsOutlined />, team: false },
+    { key: '/qc3d/admin', label: 'Quản trị & quyền', icon: <TeamOutlined />, team: true },
 ];
 
 export default function Qc3dApp(): JSX.Element {
     const history = useHistory();
     const { pathname } = useLocation();
-    const selected = [...SECTIONS].reverse().find(({ key }) => pathname.startsWith(key))?.key ?? '/qc3d';
+    const [helpOpen, setHelpOpen] = useState(false);
+    const { summary } = useSummary();
+    const isTeam = !!summary && (summary.is_admin || summary.roles.length > 0);
+    const sections = SECTIONS.filter((item) => !item.team || isTeam)
+        .map(({ key, label, icon }) => ({ key, label, icon }));
+    const isJob = pathname.startsWith('/qc3d/jobs/');
+    const selected = isJob ? '/qc3d/review' :
+        [...SECTIONS].reverse().find(({ key }) => pathname.startsWith(key))?.key ?? '/qc3d';
+    const section = SECTIONS.find(({ key }) => key === selected);
 
     return (
-        <div className='cvat-qc3d-page' style={{ padding: 24, height: '100%', overflow: 'auto' }}>
-            <Menu
-                mode='horizontal'
-                selectedKeys={[selected]}
-                items={SECTIONS}
-                onClick={({ key }) => history.push(key)}
-                style={{ marginBottom: 16 }}
-            />
-            <Switch>
-                <Route exact path='/qc3d' component={DashboardPage} />
-                <Route exact path='/qc3d/jobs/:jobId' component={JobPage} />
-                <Route exact path='/qc3d/review' component={ReviewPage} />
-                <Route exact path='/qc3d/qa'>
-                    <PlannedPage
-                        title='Nghiệm thu QA'
-                        description='Lấy mẫu 299 đối tượng, kết luận Clopper–Pearson (Sprint 3)'
+        <ConfigProvider theme={{ token: { colorPrimary: '#315be8', borderRadius: 10, colorText: '#25324b' } }}>
+            <div className='cvat-qc3d-page qc3d-shell'>
+                <aside className='qc3d-sidebar' aria-label='Điều hướng QC 3D'>
+                    <Link className='qc3d-brand' to='/qc3d'>
+                        <span className='qc3d-brand-icon'><SafetyCertificateOutlined /></span>
+                        <span>
+                            <strong>QC 3D <span>AutoFix</span></strong>
+                            <small>Kiểm soát chất lượng gán nhãn</small>
+                        </span>
+                    </Link>
+                    <div className='qc3d-nav-caption'>KHÔNG GIAN LÀM VIỆC</div>
+                    <Menu mode='inline' selectedKeys={[selected]} items={sections}
+                        onClick={({ key }) => history.push(key)}
                     />
-                </Route>
-                <Route exact path='/qc3d/classes' component={TaxonomyPage} />
-                <Route exact path='/qc3d/admin' component={AdminPage} />
-            </Switch>
-        </div>
+                    <div className='qc3d-sidebar-footer'>
+                        <div className='qc3d-workflow-note'>
+                            <SafetyCertificateOutlined />
+                            <strong>Kiểm tra → Xem trước → Áp dụng</strong>
+                            <p>Xem đề xuất sửa và giữ quyền quyết định trên từng đối tượng.</p>
+                        </div>
+                        <Link to='/tasks'><ArrowLeftOutlined /> Quay về task CVAT</Link>
+                    </div>
+                </aside>
+                <div className='qc3d-workspace'>
+                    <header className='qc3d-topbar'>
+                        <Breadcrumb items={[
+                            { title: <Link to='/qc3d'>QC 3D</Link> },
+                            { title: isJob ? 'Báo cáo job' : section?.label },
+                            ...(pathname.startsWith('/qc3d/guidelines/') ? [{ title: 'Chỉnh sửa guideline' }] : []),
+                        ]}
+                        />
+                        <Button type='text' icon={<QuestionCircleOutlined />} onClick={() => setHelpOpen(true)}>
+                            Hướng dẫn nhanh
+                        </Button>
+                    </header>
+                    <main className='qc3d-content'>
+                        <Switch>
+                            <Route exact path='/qc3d' component={DashboardPage} />
+                            <Route exact path='/qc3d/jobs/:jobId' component={JobPage} />
+                            <Route exact path='/qc3d/my' component={MyWorkPage} />
+                            <Route exact path='/qc3d/review' component={ReviewPage} />
+                            <Route exact path='/qc3d/qa'>
+                                <PlannedPage
+                                    title='Nghiệm thu QA'
+                                    description='Lấy mẫu đối tượng và đánh giá chất lượng trước khi nghiệm thu.'
+                                />
+                            </Route>
+                            <Route exact path='/qc3d/guidelines' component={GuidelinesPage} />
+                            <Route exact path='/qc3d/guidelines/:id' component={GuidelineEditorPage} />
+                            <Route exact path='/qc3d/classes' component={TaxonomyPage} />
+                            <Route exact path='/qc3d/admin' component={AdminPage} />
+                        </Switch>
+                    </main>
+                </div>
+                <Modal open={helpOpen} title='Bắt đầu với QC 3D AutoFix' footer={null}
+                    onCancel={() => setHelpOpen(false)}
+                >
+                    <ol className='qc3d-help-steps'>
+                        <li><strong>Chọn job 3D</strong><p>Mở job từ Tổng quan hoặc Hàng đợi review.</p></li>
+                        <li>
+                            <strong>Chạy kiểm tra QC</strong>
+                            <p>QC dùng guideline của task hoặc project để phát hiện lỗi.</p>
+                        </li>
+                        <li>
+                            <strong>Xem và duyệt lỗi</strong>
+                            <p>Lọc lỗi, mở đối tượng trong CVAT, xác nhận hoặc bỏ qua có lý do.</p>
+                        </li>
+                        <li>
+                            <strong>Xem trước AutoFix</strong>
+                            <p>
+                                Kiểm tra đề xuất, loại trừ class cần giữ nguyên rồi áp dụng.
+                                Có thể hoàn tác từng bản sửa.
+                            </p>
+                        </li>
+                    </ol>
+                    <p className='qc3d-cell-secondary'>Các thao tác hiện theo vai trò QC và quyền truy cập job của bạn.</p>
+                </Modal>
+            </div>
+        </ConfigProvider>
     );
 }

@@ -1,0 +1,858 @@
+// Copyright (C) CVAT.ai Corporation
+// SPDX-License-Identifier: MIT
+
+.qc3d-shell {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+    background: #f4f6fb;
+    color: #25324b;
+
+    * { box-sizing: border-box; }
+
+    .ant-card {
+        border-color: #e6eaf2;
+        box-shadow: 0 3px 14px rgba(32, 52, 89, 3%);
+    }
+    .ant-card-head { border-bottom-color: #edf0f6; }
+    .ant-card-head-title { font-weight: 600; }
+    .ant-btn { font-weight: 500; }
+    .ant-btn-primary { box-shadow: 0 3px 8px rgba(49, 91, 232, 16%); }
+
+    .ant-table-thead > tr > th {
+        background: #f8f9fc;
+        color: #67758c;
+        font-size: 12px;
+    }
+    .ant-table-tbody > tr > td { border-bottom-color: #edf0f6; }
+    .ant-tag { border-radius: 5px; }
+    .ant-alert { border-radius: 10px; }
+
+    a:focus-visible, button:focus-visible {
+        outline: 2px solid #315be8;
+        outline-offset: 3px;
+    }
+}
+
+.qc3d-sidebar {
+    width: 228px;
+    flex: 0 0 228px;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-right: 1px solid #e6eaf2;
+    padding: 28px 12px 20px;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    min-height: 100%;
+
+    .ant-menu {
+        border-inline-end: 0 !important;
+        background: transparent;
+        font-size: 13px;
+    }
+
+    .ant-menu-item {
+        height: 44px;
+        margin-block: 6px;
+    }
+
+    .ant-menu-item-selected {
+        background: #edf2ff;
+        font-weight: 600;
+    }
+    .ant-menu-item .anticon { font-size: 17px; }
+}
+
+.qc3d-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 5px;
+    margin-bottom: 34px;
+    color: #203251;
+
+    strong {
+        display: block;
+        font-size: 16px;
+        letter-spacing: -0.5px;
+        white-space: nowrap;
+    }
+
+    strong span {
+        color: #315be8;
+        font-size: 12px;
+        letter-spacing: 0;
+    }
+
+    small {
+        display: block;
+        color: #7b879a;
+        font-size: 10px;
+        margin-top: 4px;
+    }
+}
+
+.qc3d-brand-icon {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 42px;
+    background: #315be8;
+    border-radius: 12px;
+    color: white;
+    font-size: 23px;
+    flex-shrink: 0;
+}
+
+.qc3d-nav-caption {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: #98a2b5;
+    padding: 0 16px 9px;
+}
+
+.qc3d-sidebar-footer {
+    margin-top: auto;
+    padding: 48px 10px 0;
+    font-size: 12px;
+}
+
+.qc3d-sidebar-footer > a {
+    color: #67758c;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.qc3d-workflow-note {
+    padding: 14px;
+    border: 1px solid #e6eaf2;
+    background: #f8faff;
+    border-radius: 10px;
+    margin-bottom: 20px;
+
+    > .anticon {
+        font-size: 21px;
+        color: #315be8;
+        margin-bottom: 10px;
+    }
+
+    strong {
+        display: block;
+        font-size: 11px;
+        color: #526480;
+    }
+
+    p {
+        font-size: 11px;
+        color: #7b879a;
+        line-height: 1.7;
+        margin: 7px 0 0;
+    }
+}
+
+.qc3d-workspace {
+    flex: 1;
+    min-width: 0;
+}
+
+.qc3d-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    min-height: 60px;
+    padding: 12px 28px;
+    border-bottom: 1px solid #e6eaf2;
+    background: #fff;
+
+    .ant-breadcrumb { font-size: 12px; }
+
+    .ant-btn {
+        font-size: 12px;
+        color: #67758c;
+    }
+}
+
+.qc3d-content {
+    padding: 28px;
+    max-width: 1720px;
+    margin: 0 auto;
+}
+
+.qc3d-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 24px;
+
+    h2 {
+        margin: 0 0 7px;
+        color: #1e2e49;
+        font-size: 25px;
+        font-weight: 650;
+        letter-spacing: -0.7px;
+        line-height: 1.3;
+    }
+
+    p {
+        margin: 0;
+        color: #7b879a;
+        font-size: 13px;
+        line-height: 1.7;
+    }
+}
+
+.qc3d-page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.qc3d-dashboard, .qc3d-admin, .qc3d-taxonomy, .qc3d-guidelines {
+    > .ant-alert { margin-bottom: 20px; }
+    > .ant-card { margin-bottom: 20px; }
+}
+
+.qc3d-stat-card {
+    height: 100%;
+
+    .ant-card-body { padding: 21px 23px; }
+
+    .ant-statistic-title {
+        color: #718097;
+        font-size: 12px;
+        margin-bottom: 10px;
+    }
+
+    .ant-statistic-content {
+        color: #263854;
+        font-size: 32px;
+        font-weight: 650;
+        line-height: 1.2;
+    }
+}
+.qc3d-stat-accent { border-top: 3px solid #315be8 !important; }
+.qc3d-stat-warning .ant-statistic-content { color: #bd7914; }
+
+.qc3d-stat-caption {
+    display: block;
+    font-size: 11px;
+    color: #8b96a8;
+    margin-top: 12px;
+}
+
+.qc3d-quick-links {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 20px 0;
+    font-size: 12px;
+}
+
+.qc3d-stage-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.qc3d-stage-summary > span:first-child {
+    color: #7b879a;
+    margin-right: 6px;
+}
+.qc3d-table-card .ant-card-body { padding: 20px 22px; }
+
+.qc3d-table-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.qc3d-search-input {
+    width: 320px;
+    flex: 1;
+    min-width: 180px;
+    max-width: 440px;
+}
+.qc3d-filter-select { min-width: 168px; }
+
+.qc3d-table-meta {
+    color: #8b96a8;
+    font-size: 11px;
+    margin-bottom: 14px;
+}
+.qc3d-job-link { font-weight: 650; }
+
+.qc3d-cell-primary {
+    font-weight: 500;
+    color: #354660;
+}
+
+.qc3d-cell-secondary {
+    color: #8b96a8;
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.qc3d-loading-state {
+    display: flex;
+    min-height: 280px;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    color: #7b879a;
+}
+.qc3d-role-summary { margin-bottom: 15px; }
+
+.qc3d-role-card {
+    height: 100%;
+    background: #f8faff;
+    border: 1px solid #e6eaf2;
+    border-radius: 10px;
+    padding: 20px;
+
+    h3 {
+        font-size: 15px;
+        color: #354660;
+    }
+
+    p {
+        font-size: 12px;
+        color: #7b879a;
+        line-height: 1.8;
+        margin: 12px 0 0;
+    }
+}
+.qc3d-role-grid { margin-bottom: 18px; }
+
+.qc3d-taxonomy-note {
+    padding: 14px 18px;
+    background: #edf2ff;
+    color: #526480;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.qc3d-empty-card {
+    text-align: center;
+    padding: 50px 20px;
+}
+
+.qc3d-empty-icon {
+    font-size: 42px;
+    color: #9cafdc;
+    margin-bottom: 18px;
+}
+
+.qc3d-help-steps {
+    padding-left: 24px;
+    margin: 24px 0;
+}
+
+.qc3d-help-steps li {
+    padding-left: 5px;
+    margin-bottom: 20px;
+}
+
+.qc3d-help-steps li::marker {
+    color: #315be8;
+    font-weight: 600;
+}
+
+.qc3d-help-steps p {
+    margin: 5px 0 0;
+    color: #7b879a;
+    line-height: 1.7;
+}
+.qc3d-guide-help { margin-top: 20px; }
+
+.qc3d-form-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: 7px;
+    color: #526480;
+}
+
+.qc3d-guide-settings {
+    padding: 18px;
+    background: #f8faff;
+    border: 1px solid #e6eaf2;
+    border-radius: 10px;
+    margin-bottom: 24px;
+}
+.qc3d-guide-editor .ant-tabs-nav { margin-bottom: 22px; }
+.qc3d-guide-editor .ant-tabs-tab { padding-block: 12px; }
+
+.qc3d-rule-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #e6eaf2;
+    border-radius: 8px;
+}
+
+.qc3d-threshold-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: #f8faff;
+    border-radius: 8px;
+    height: 100%;
+}
+
+.qc3d-guide-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+@media (width <= 1100px) {
+    .qc3d-sidebar {
+        width: 205px;
+        flex-basis: 205px;
+    }
+    .qc3d-content { padding: 22px; }
+    .qc3d-page-header h2 { font-size: 22px; }
+}
+
+@media (width <= 760px) {
+    .qc3d-shell { flex-direction: column; }
+
+    .qc3d-sidebar {
+        position: static;
+        width: 100%;
+        flex: 0 0 auto;
+        min-height: 0;
+        border-right: 0;
+        border-bottom: 1px solid #e6eaf2;
+        padding: 15px 12px 8px;
+
+        .ant-menu {
+            display: flex;
+            overflow-x: auto;
+        }
+
+        .ant-menu-item {
+            flex: 0 0 auto;
+            width: auto;
+            padding-inline: 15px !important;
+            margin: 0 4px;
+        }
+    }
+    .qc3d-brand { margin-bottom: 12px; }
+
+    .qc3d-brand-icon {
+        width: 32px;
+        height: 34px;
+        font-size: 19px;
+    }
+    .qc3d-sidebar-footer, .qc3d-nav-caption { display: none; }
+
+    .qc3d-topbar {
+        padding: 9px 16px;
+        min-height: 48px;
+    }
+    .qc3d-content { padding: 20px 14px; }
+    .qc3d-page-header { margin-bottom: 20px; }
+    .qc3d-page-header h2 { font-size: 21px; }
+    .qc3d-page-actions { width: 100%; }
+    .qc3d-table-card .ant-card-body { padding: 16px 12px; }
+
+    .qc3d-search-input {
+        width: 100%;
+        max-width: none;
+        flex-basis: 100%;
+    }
+
+    .qc3d-filter-select {
+        flex: 1;
+        min-width: 140px;
+    }
+    .qc3d-guide-actions { width: 100%; }
+
+    .qc3d-loading-state {
+        min-height: 180px;
+        flex-direction: column;
+    }
+}
+
+// ---- Chất lượng của tôi ----------------------------------------------------------------------
+
+.qc3d-my-work {
+    .qc3d-kpi-label {
+        font-size: 13px;
+        color: #69788d;
+    }
+
+    .qc3d-kpi-value {
+        margin: 4px 0 6px;
+        font-size: 30px;
+        font-weight: 650;
+        line-height: 1.1;
+        color: #1d2a44;
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+.qc3d-status-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 16px 0;
+}
+
+.qc3d-status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px 6px 6px;
+    border: 1px solid #e5eaf1;
+    border-radius: 999px;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+
+    .ant-tag { margin: 0; }
+
+    b {
+        font-variant-numeric: tabular-nums;
+        color: #203149;
+    }
+
+    &:hover { border-color: #b9c8ec; }
+
+    &:focus-visible {
+        outline: 2px solid #315be8;
+        outline-offset: 2px;
+    }
+}
+
+.qc3d-status-active {
+    border-color: #315be8;
+    box-shadow: 0 0 0 2px rgba(49, 91, 232, 0.12);
+}
+
+.qc3d-chart-card .ant-card-body { min-height: 190px; }
+
+.qc3d-barlist {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.qc3d-barlist-row {
+    display: grid;
+    grid-template-columns: minmax(90px, 42%) 1fr 36px;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+}
+
+.qc3d-barlist-label {
+    overflow: hidden;
+    color: #4a5568;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.qc3d-barlist-track {
+    height: 10px;
+    border-radius: 4px;
+    background: #eef2f8;
+}
+
+.qc3d-barlist-bar {
+    display: block;
+    height: 100%;
+    min-width: 4px;
+    border-radius: 4px;
+    background: #315be8;
+}
+
+.qc3d-barlist-value {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: #203149;
+}
+
+.qc3d-trend {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    height: 160px;
+    border-bottom: 1px solid #e5eaf1;
+}
+
+.qc3d-trend-col {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    min-width: 22px;
+    padding-bottom: 18px;
+}
+
+.qc3d-trend-bar {
+    width: 70%;
+    max-width: 26px;
+    border-radius: 4px 4px 0 0;
+    background: #315be8;
+}
+
+.qc3d-trend-value {
+    margin-bottom: 4px;
+    font-size: 10px;
+    color: #4a5568;
+}
+
+.qc3d-trend-label {
+    position: absolute;
+    bottom: 0;
+    font-size: 10px;
+    color: #69788d;
+}
+
+.qc3d-reviewers,
+.qc3d-issue-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+
+    .ant-tag { margin: 0; }
+}
+
+.qc3d-feedback {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.qc3d-feedback-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+}
+
+.qc3d-feedback-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+
+    > div {
+        display: flex;
+        flex-direction: column;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: #f5f8fc;
+    }
+
+    span {
+        font-size: 12px;
+        color: #69788d;
+    }
+}
+
+.qc3d-feedback-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.qc3d-feedback-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid #e5eaf1;
+    border-left-width: 3px;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.qc3d-feedback-item-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.qc3d-outcome-confirmed { border-left-color: #e5484d; }
+.qc3d-outcome-fixed { border-left-color: #f76b15; }
+.qc3d-outcome-open { border-left-color: #f5a524; }
+.qc3d-outcome-waived { border-left-color: #30a46c; }
+
+// ---- Phân tích chất lượng QC (Tổng quan) -----------------------------------------------------
+
+.qc3d-analytics {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin: 20px 0;
+}
+
+.qc3d-analytics-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+
+    h3 {
+        margin: 0;
+        font-size: 18px;
+        color: #203149;
+    }
+}
+
+.qc3d-analytics-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.qc3d-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
+}
+
+.qc3d-kpi {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 14px 16px;
+    border: 1px solid #e5eaf1;
+    border-top: 3px solid #c9d3e3;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(32, 49, 73, 0.04);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    animation: qc3d-rise 0.45s ease both;
+
+    &:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(32, 49, 73, 0.08);
+    }
+
+    .qc3d-kpi-label {
+        font-size: 12px;
+        color: #69788d;
+    }
+
+    .qc3d-kpi-value {
+        font-size: 28px;
+        font-weight: 650;
+        line-height: 1.15;
+        color: #1d2a44;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .ant-tag { align-self: flex-start; }
+}
+
+@keyframes qc3d-rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+
+.qc3d-chart-card {
+    height: 100%;
+    border-radius: 12px;
+
+    .ant-card-head-title small {
+        display: block;
+        font-size: 12px;
+        font-weight: 400;
+        color: #69788d;
+    }
+}
+
+.qc3d-doughnut-center {
+    position: absolute;
+    top: 42%;
+    left: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+
+    b {
+        font-size: 28px;
+        line-height: 1;
+        color: #1d2a44;
+    }
+
+    span {
+        font-size: 12px;
+        color: #69788d;
+    }
+}
+
+.qc3d-attention {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.qc3d-attention-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 40%) 1fr 110px;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    color: #203149;
+
+    &:hover { background: #f5f8fc; }
+}
+
+.qc3d-attention-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.qc3d-attention-value {
+    text-align: right;
+    font-size: 12px;
+    color: #4a5568;
+}
+
+.qc3d-score-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .ant-progress { flex: 1; margin: 0; }
+
+    span {
+        min-width: 48px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .qc3d-kpi { animation: none; transition: none; }
+}

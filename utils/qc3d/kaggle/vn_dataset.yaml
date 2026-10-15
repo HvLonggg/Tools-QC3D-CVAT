@@ -1,0 +1,93 @@
+# OpenPCDet dataset config for the VN training set built by utils/qc3d/build_train_set.py
+DATASET: 'CustomDataset'
+DATA_PATH: '../data/custom'
+
+# ground at z = -1.8 (build_train_set.GROUND_Z); 102.4 m / 0.2 m = 512 cells (divisible by 8)
+POINT_CLOUD_RANGE: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+# OpenPCDet evaluates custom datasets with the KITTI metric: classes are mapped to KITTI names
+MAP_CLASS_TO_KITTI: {
+    'Car': 'Car',
+    'LargeVehicle': 'Truck',
+    'TwoWheeler': 'Cyclist',
+    'Pedestrian': 'Pedestrian',
+}
+
+# label names of the training set -> classes the model learns (applied by the notebook when reading labels)
+CLASS_GROUPS: {
+    'Truck': 'LargeVehicle',
+    'Bus': 'LargeVehicle',
+    'Rider': 'TwoWheeler',
+    'Motorbike': 'TwoWheeler',
+}
+
+DATA_SPLIT: {
+    'train': train,
+    'test': val
+}
+
+INFO_PATH: {
+    'train': [custom_infos_train.pkl],
+    'test': [custom_infos_val.pkl],
+}
+
+# same 5 features as nuScenes (intensity 0-255, time lag 0) so nuScenes-pretrained weights fit as is
+POINT_FEATURE_ENCODING: {
+    encoding_type: absolute_coordinates_encoding,
+    used_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
+    src_feature_list: ['x', 'y', 'z', 'intensity', 'timestamp'],
+}
+
+DATA_AUGMENTOR:
+    DISABLE_AUG_LIST: ['placeholder']
+    AUG_CONFIG_LIST:
+        - NAME: gt_sampling
+          USE_ROAD_PLANE: False
+          DB_INFO_PATH:
+              - custom_dbinfos_train.pkl
+          PREPARE: {
+             filter_by_min_points: ['Car:5', 'LargeVehicle:5', 'TwoWheeler:5', 'Pedestrian:5'],
+          }
+          # the rarer large vehicles are pasted more often into training scenes
+          SAMPLE_GROUPS: ['Car:10', 'LargeVehicle:10', 'TwoWheeler:10', 'Pedestrian:12']
+          NUM_POINT_FEATURES: 5
+          DATABASE_WITH_FAKELIDAR: False
+          REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+          LIMIT_WHOLE_SCENE: True
+
+        # terrain steps: one side of a random line moves up or down with its objects (added by the notebook,
+        # make_notebook.py); objects on a lower or higher road than the ego road
+        - NAME: random_region_z_shift
+          PROBABILITY: 0.5
+          LINE_RANGE: [-25.0, 25.0]
+          SHIFT_RANGE: [-3.0, 1.5]
+
+        - NAME: random_world_translation
+          NOISE_TRANSLATE_STD: [0.0, 0.0, 0.3]
+
+        - NAME: random_world_flip
+          ALONG_AXIS_LIST: ['x', 'y']
+
+        - NAME: random_world_rotation
+          WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+        - NAME: random_world_scaling
+          WORLD_SCALE_RANGE: [0.95, 1.05]
+
+DATA_PROCESSOR:
+    - NAME: mask_points_and_boxes_outside_range
+      REMOVE_OUTSIDE_BOXES: True
+
+    - NAME: shuffle_points
+      SHUFFLE_ENABLED: {
+        'train': True,
+        'test': False
+      }
+
+    - NAME: transform_points_to_voxels
+      VOXEL_SIZE: [0.2, 0.2, 8.0]
+      MAX_POINTS_PER_VOXEL: 20
+      MAX_NUMBER_OF_VOXELS: {
+        'train': 40000,
+        'test': 40000
+      }

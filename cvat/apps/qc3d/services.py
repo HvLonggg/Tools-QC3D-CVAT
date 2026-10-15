@@ -11,12 +11,25 @@ from django.db import transaction
 from django.utils import timezone
 
 from cvat.apps.dataset_manager.task import PatchAction, get_job_data, patch_job_data
-from cvat.apps.engine.models import Job, Label
+from cvat.apps.engine.models import AnnotationGuide, Job, Label
 from cvat.apps.engine.serializers import LabeledDataSerializer
 
-from .models import FixStatus, IssueStatus, QcIssue, QcRun
+from .models import FixStatus, IssueStatus, QcGuideline, QcGuidelineBinding, QcIssue, QcRun
+from .qc.autofix import plan_autofix
 from .qc.geometry import Cuboid, read_pcd
-from .qc.rules import DEFAULT_CONFIG, RULES_VERSION, QcContext, run_rules
+from .qc.guideline import AUTOFIX_KINDS, GuidelineError, default_autofix, parse_file, qc_config
+from .qc.objects import reference_sizes
+from .qc.rules import RULES_VERSION, QcContext, run_rules
+from .qc.taxonomy import TAXONOMY_VERSION
+
+GUIDELINE_SOURCES = {
+    "task": "Guideline QC gán cho task",
+    "cvat_guide_task": "Guide CVAT của task",
+    "project": "Guideline QC gán cho project",
+    "cvat_guide_project": "Guide CVAT của project",
+    "default": "Guideline QC mặc định",
+    "builtin": "Bộ class VN dựng sẵn",
+}
 
 
 def _jsonable(value):
@@ -61,7 +74,7 @@ def build_cuboids(job_data: dict, labels: dict[int, str]) -> list[Cuboid]:
     return cuboids
 
 
-def load_point_clouds(job: Job, frames: set[int]) -> dict:
+def load_point_clouds(job: Job, frames: set[int], *, with_intensity: bool = False) -> dict:
     data = job.segment.task.data
     raw_dir = data.get_raw_data_dirname()
     paths = dict(data.images.filter(frame__in=frames).values_list("frame", "path"))
@@ -69,25 +82,108 @@ def load_point_clouds(job: Job, frames: set[int]) -> dict:
     for frame, path in paths.items():
         full_path = os.path.join(raw_dir, path)
         if os.path.isfile(full_path):
-            point_clouds[frame] = read_pcd(full_path)
+            point_clouds[frame] = read_pcd(full_path, with_intensity=with_intensity)
     return point_clouds
 
 
-def run_job_qc(job: Job, user) -> QcRun:
+def _stored(guideline: QcGuideline, source: str) -> dict:
+    return {
+        "source": source, "id": guideline.id, "name": guideline.name, "revision": guideline.revision,
+        "content": guideline.content, "warnings": [],
+    }
+
+
+def _cvat_guide(target, kind: str, skipped: list[str]) -> dict | None:
+    """A CVAT annotation guide (markdown written on the task / project page) that contains a class table."""
+    guide = AnnotationGuide.objects.filter(**{kind: target}).first()
+    if guide is None or not guide.markdown.strip():
+        return None
+    try:
+        content, warnings = parse_file("guide.md", guide.markdown.encode("utf-8"))
+    except GuidelineError as e:
+        skipped.append(f"{GUIDELINE_SOURCES['cvat_guide_' + kind]}: {e.errors[0]}")
+        return None
+    return {
+        "source": f"cvat_guide_{kind}", "id": guide.id,
+        "name": f"{GUIDELINE_SOURCES['cvat_guide_' + kind]} #{target.id}",
+        "revision": guide.updated_date.isoformat(timespec="seconds"),
+        "content": content, "warnings": warnings,
+    }
+
+
+def resolve_guideline(job: Job) -> dict:
+    """
+    Guideline applied to a job, most specific first:
+    task binding > task CVAT guide > project binding > project CVAT guide > default > built-in taxonomy.
+    """
+    task = job.segment.task
+    skipped: list[str] = []
+    resolved = None
+    binding = QcGuidelineBinding.objects.select_related("guideline").filter(task=task).first()
+    if binding:
+        resolved = _stored(binding.guideline, "task")
+    if resolved is None:
+        resolved = _cvat_guide(task, "task", skipped)
+    if resolved is None and task.project_id:
+        binding = QcGuidelineBinding.objects.select_related("guideline").filter(project_id=task.project_id).first()
+        resolved = _stored(binding.guideline, "project") if binding else _cvat_guide(task.project, "project", skipped)
+    if resolved is None:
+        default = QcGuideline.objects.filter(is_default=True).first()
+        if default:
+            resolved = _stored(default, "default")
+    if resolved is None:
+        resolved = {
+            "source": "builtin", "id": None, "name": GUIDELINE_SOURCES["builtin"], "revision": TAXONOMY_VERSION,
+            "content": None, "warnings": [],
+        }
+    resolved["source_text"] = GUIDELINE_SOURCES[resolved["source"]]
+    resolved["key"] = f"{resolved['source']}:{resolved['id']}:{resolved['revision']}"
+    resolved["skipped"] = skipped
+    return resolved
+
+
+def guideline_snapshot(resolved: dict) -> dict:
+    """What a QC run records about its guideline (enough to reproduce the run, without the guide text)."""
+    content = resolved["content"] or {}
+    return {
+        **{k: resolved[k] for k in ("source", "id", "name", "revision", "key")},
+        "classes": content.get("classes"),
+        "thresholds": content.get("thresholds", {}),
+        "rules": content.get("rules", {}),
+        "autofix": content.get("autofix") or default_autofix(),
+    }
+
+
+def run_job_qc(job: Job, user, frames: set[int] | None = None, marked: set[str] | None = None) -> QcRun:
+    """
+    QC of the job, or of some of its frames (`frames`); `marked`: boxes a reviewer marked as wrong, each
+    gets a complete correction (rule R14).
+    """
     started = time.monotonic()
     job_data = get_job_data(job.id)
     label_ids = {s["label_id"] for s in job_data["shapes"]} | {t["label_id"] for t in job_data["tracks"]}
     labels = dict(Label.objects.filter(id__in=label_ids).values_list("id", "name"))
-    cuboids = build_cuboids(job_data, labels)
+    all_cuboids = build_cuboids(job_data, labels)
+    cuboids = all_cuboids if frames is None else [c for c in all_cuboids if c.frame in frames]
 
-    config = dict(DEFAULT_CONFIG)
+    guideline = resolve_guideline(job)
+    config = qc_config(guideline["content"])
     task_labels = list(job.get_labels().values_list("name", flat=True))
     config["labels"] = task_labels or config["labels"]
 
+    from .detection import detections_for
+
+    detections = detections_for(job, frames)
+    # frames the model found objects on are needed too, to check new boxes against the points
+    cloud_frames = {c.frame for c in cuboids} | set(detections or {})
     ctx = QcContext(
         cuboids=cuboids,
-        point_clouds=load_point_clouds(job, {c.frame for c in cuboids}),
+        point_clouds=load_point_clouds(job, cloud_frames),
         config=config,
+        detections=detections,
+        # the size of an object comes from all the frames it is seen in, also when only some are checked
+        reference=reference_sizes([c for c in all_cuboids if c.label], config["classes"]),
+        marked=set(marked or ()),
     )
     results = run_rules(ctx)
     by_uid = {c.uid: c for c in cuboids}
@@ -109,6 +205,8 @@ def run_job_qc(job: Job, user) -> QcRun:
                 {"rule": r.rule, "status": r.status, "reason": r.reason, "issues": len(r.issues)}
                 for r in results
             ],
+            guideline=_jsonable(guideline_snapshot(guideline)),
+            frames=sorted(frames) if frames is not None else None,
         )
         issues = []
         for result in results:
@@ -122,7 +220,8 @@ def run_job_qc(job: Job, user) -> QcRun:
                         severity=issue.severity,
                         frame=issue.frame,
                         uid=issue.uid,
-                        label=box.label if box else "",
+                        # an object the model saw without any label (R12): the model's class
+                        label=box.label if box else str(issue.evidence.get("model_class", "")),
                         message=issue.message,
                         evidence=_jsonable(issue.evidence),
                         status=kept.status if kept else IssueStatus.OPEN,
@@ -182,15 +281,44 @@ def _siblings(issue: QcIssue):
     ]
 
 
+def _create_boxes(job: Job, proposal: dict, excluded: set[str]) -> dict:
+    """Add the new cuboids of a create proposal; returns what revert needs (the ids of the new shapes)."""
+    label_ids = {name: label_id for label_id, name in job.get_labels().values_list("id", "name")}
+    shapes = [shape for shape in proposal["shapes"] if shape["label"] not in excluded]
+    if not shapes:
+        raise FixError("Không còn box nào thuộc phạm vi class được chọn", 422)
+    missing = sorted({shape["label"] for shape in shapes} - set(label_ids))
+    if missing:
+        raise FixError(f"Schema chưa có class {', '.join(missing)}; thêm label vào project trước", 422)
+    data = _patch(job, PatchAction.CREATE, shapes=[
+        {
+            "type": "cuboid", "frame": shape["frame"], "label_id": label_ids[shape["label"]],
+            "points": [*shape["points"], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            "occluded": False, "outside": False, "z_order": 0, "rotation": 0.0, "group": 0,
+            "source": "auto", "attributes": [],
+        }
+        for shape in shapes
+    ])
+    return {"created": [shape["id"] for shape in data["shapes"]], "labels": [s["label"] for s in shapes]}
+
+
 @transaction.atomic
-def apply_fix(issue: QcIssue, user) -> QcIssue:
-    """Write the proposed correction to the CVAT job, keeping the previous state for revert."""
+def apply_fix(issue: QcIssue, user, *, excluded: set[str] = frozenset()) -> QcIssue:
+    """
+    Write the proposed correction to the CVAT job, keeping the previous state for revert.
+    A create proposal adds new boxes (classes in `excluded` are left out).
+    """
     if not issue.proposal:
         raise FixError("Vấn đề này không có đề xuất sửa", 422)
     if issue.fix_status == FixStatus.APPLIED:
         raise FixError("Đề xuất đã được áp dụng", 409)
 
     job = issue.run.job
+    if issue.proposal["kind"] == "create":
+        before = _create_boxes(job, issue.proposal, set(excluded))
+        _mark_applied(issue, user, before)
+        issue.refresh_from_db()
+        return issue
     kind, obj, target = _locate(job, issue.uid)
     if obj is None or target is None:
         raise FixError("Đối tượng không còn trên CVAT; chạy lại QC", 409)
@@ -223,6 +351,12 @@ def apply_fix(issue: QcIssue, user) -> QcIssue:
         else:
             _patch(job, PatchAction.UPDATE, shapes=[obj])
 
+    _mark_applied(issue, user, before)
+    issue.refresh_from_db()
+    return issue
+
+
+def _mark_applied(issue: QcIssue, user, before) -> None:
     now = timezone.now()
     for other in _siblings(issue):
         other.fix_status = FixStatus.APPLIED
@@ -233,8 +367,6 @@ def apply_fix(issue: QcIssue, user) -> QcIssue:
         other.decided_by = other.decided_by or user
         other.decided_date = other.decided_date or now
         other.save()
-    issue.refresh_from_db()
-    return issue
 
 
 @transaction.atomic
@@ -244,8 +376,17 @@ def revert_fix(issue: QcIssue, user) -> QcIssue:
         raise FixError("Chưa có bản sửa nào để hoàn tác", 409)
     job = issue.run.job
     before = copy.deepcopy(issue.fix_before)
-    kind, obj, _ = _locate(job, issue.uid)
-    if issue.proposal and issue.proposal["kind"] == "delete":
+    if issue.proposal and issue.proposal["kind"] == "create":
+        created = set(before.get("created", []))
+        shapes = [s for s in get_job_data(job.id)["shapes"] if s["id"] in created]
+        if shapes:
+            _patch(job, PatchAction.DELETE, shapes=shapes)
+        kind = obj = None
+    else:
+        kind, obj, _ = _locate(job, issue.uid)
+    if issue.proposal and issue.proposal["kind"] == "create":
+        pass  # the added boxes are deleted above
+    elif issue.proposal and issue.proposal["kind"] == "delete":
         before.pop("id", None)  # the shape was deleted: re-create it
         _patch(job, PatchAction.CREATE, shapes=[before])
     else:
@@ -273,3 +414,119 @@ def decide_issue(issue: QcIssue, user, status: str, reason: str) -> QcIssue:
     issue.decision_reason = reason
     issue.save(update_fields=["status", "decided_by", "decided_date", "decision_reason"])
     return issue
+
+
+def _autofix_plan(run: QcRun, excluded: set[str], allowed_kinds: set[str]) -> tuple[list[QcIssue], list[dict]]:
+    """One issue per object proposal that auto-fix may write; and what it leaves to the reviewer."""
+    return plan_autofix(
+        run.issues.exclude(proposal=None).order_by("frame", "id"), excluded,
+        applied_status=FixStatus.APPLIED, waived_status=IssueStatus.WAIVED, allowed_kinds=allowed_kinds,
+    )
+
+
+def stale_reason(job: Job, run: QcRun, guideline: dict) -> str | None:
+    """Why the proposals of `run` no longer describe the job (None: still current)."""
+    if run.rules_version != RULES_VERSION:
+        return f"bộ rule đã đổi ({run.rules_version} → {RULES_VERSION})"
+    if (run.guideline or {}).get("key") != guideline["key"]:
+        return "guideline áp dụng cho job đã thay đổi"
+    if run.annotations_version != get_job_data(job.id).get("version", 0):
+        return "nhãn đã thay đổi sau lần QC"
+    return None
+
+
+def marked_frames(job: Job, uids: list[str]) -> set[int]:
+    """Frames of the boxes a reviewer marked ("s:<shape>" or "t:<track>:<frame>")."""
+    data = get_job_data(job.id)
+    shape_frames = {s["id"]: s["frame"] for s in data["shapes"]}
+    frames = set()
+    for uid in uids:
+        kind, _, rest = uid.partition(":")
+        if kind == "s" and rest.isdigit() and int(rest) in shape_frames:
+            frames.add(shape_frames[int(rest)])
+        elif kind == "t" and rest.count(":") == 1:
+            frames.add(int(rest.split(":")[1]))
+    return frames
+
+
+def autofix_marked(job: Job, user, run: QcRun, uids: set[str]) -> dict:
+    """
+    Write the verified corrections of the marked boxes only (run made with `marked`), following the
+    kinds of change the guideline allows; every other box is left as it is.
+    """
+    rules = (run.guideline or {}).get("autofix") or default_autofix()
+    allowed = {kind for kind in AUTOFIX_KINDS if rules.get("fix", {}).get(kind, True)} - {"create"}
+    issues = run.issues.filter(uid__in=uids).exclude(proposal=None).order_by("frame", "id")
+    targets, skipped = plan_autofix(issues, set(), applied_status=FixStatus.APPLIED,
+                                    waived_status=IssueStatus.WAIVED, allowed_kinds=allowed)
+    applied, failed = [], []
+    for issue in targets:
+        try:
+            apply_fix(issue, user)
+            applied.append({"uid": issue.uid, "frame": issue.frame, "summary": issue.proposal["summary"]})
+        except FixError as e:
+            failed.append({"uid": issue.uid, "frame": issue.frame, "reason": str(e)})
+    fixed = {item["uid"] for item in applied}
+    for uid in sorted(uids - fixed - {item["uid"] for item in failed}):
+        issue = run.issues.filter(uid=uid, rule="R14").first()
+        reason = next((item["reason"] + (": " + "; ".join(item["checks"][:2]) if item.get("checks") else "")
+                       for item in skipped if item.get("uid") == uid), "")
+        if not reason and issue is not None:
+            proposal = issue.proposal or {}
+            reason = "; ".join(proposal.get("checks", [])) or issue.evidence.get("no_fix", "") or (
+                "box đã đúng, không cần sửa" if not proposal else "")
+        failed.append({"uid": uid, "frame": issue.frame if issue else None, "reason": reason or "không có đề xuất sửa"})
+    return {"run": run.id, "applied": applied, "failed": failed}
+
+
+def autofix_job(job: Job, user, excluded: set[str], *, dry_run: bool = False, create: bool = True) -> dict:
+    """
+    Write every verified proposal of a current QC run to CVAT, following the job's guideline:
+    the run is redone first when the labels, the guideline or the rules changed since; classes excluded
+    by the reviewer or by the guideline, and kinds of change the guideline turns off, are never written.
+    """
+    run = job.qc3d_runs.first()
+    if run is None:
+        raise FixError("Job chưa chạy QC", 409)
+    guideline = resolve_guideline(job)
+    # a QC run takes up to a minute on a large job: it is redone in the background (QC check), not here
+    stale = stale_reason(job, run, guideline)
+    rules = (run.guideline or {}).get("autofix") or default_autofix()
+    guideline_excluded = set(rules.get("exclude_classes", []))
+    allowed = {kind for kind in AUTOFIX_KINDS if rules.get("fix", {}).get(kind, True)}
+    if not create:
+        allowed.discard("create")  # turned off for this job
+    targets, skipped = _autofix_plan(run, excluded | guideline_excluded, allowed)
+    result = {
+        "run": run.id,
+        "stale_reason": stale,
+        "frames": run.frames,
+        "guideline": {
+            "name": (run.guideline or {}).get("name", ""),
+            "excluded_labels": sorted(guideline_excluded),
+            "allowed_kinds": [AUTOFIX_KINDS[k] for k in AUTOFIX_KINDS if k in allowed],
+            "blocked_kinds": [AUTOFIX_KINDS[k] for k in AUTOFIX_KINDS if k not in allowed],
+        },
+        "planned": [
+            {"issue": i.id, "uid": i.uid, "frame": i.frame, "label": i.label, "summary": i.proposal["summary"],
+             "kinds": i.proposal.get("kinds", []),
+             "new_boxes": [s["label"] for s in i.proposal.get("shapes", []) if s["label"] not in excluded | guideline_excluded]}
+            for i in targets
+        ],
+        "skipped": skipped,
+        "applied": [],
+        "failed": [],
+    }
+    if stale:
+        result["planned"], result["skipped"] = [], []
+        if not dry_run:
+            raise FixError(f"Kết quả QC đã cũ ({stale}): chạy QC lại trước", 409)
+    if dry_run:
+        return result
+    for issue in targets:
+        try:
+            apply_fix(issue, user, excluded=excluded | guideline_excluded)
+            result["applied"].append(issue.id)
+        except FixError as e:
+            result["failed"].append({"issue": issue.id, "uid": issue.uid, "frame": issue.frame, "reason": str(e)})
+    return result

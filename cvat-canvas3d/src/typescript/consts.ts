@@ -24,6 +24,7 @@ const GROUPING_COLOR = '#8b008b';
 const MERGING_COLOR = '#0000ff';
 const SPLITTING_COLOR = '#1e90ff';
 const BASE_POINT_SIZE = 4;
+const POINT_CLOUD_SIZE = 0.05; // perspective view point size (world units)
 
 export default {
     BASE_GRID_WIDTH,
@@ -47,4 +48,5 @@ export default {
     MERGING_COLOR,
     SPLITTING_COLOR,
     BASE_POINT_SIZE,
+    POINT_CLOUD_SIZE,
 };
