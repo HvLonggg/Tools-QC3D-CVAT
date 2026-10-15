@@ -1,0 +1,32 @@
+name: Việc (task)
+description: Một việc trong sprint, có tiêu chí nghiệm thu và cách kiểm tra
+labels: ["task"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Mục tiêu
+      description: Việc này giải quyết gì cho người dùng (QC, QA, lead, người gán nhãn)
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Phạm vi
+      description: Trang / API / file chính; ngoài phạm vi
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Tiêu chí nghiệm thu
+      description: Danh sách kiểm được, mỗi dòng một tiêu chí
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: test
+    attributes:
+      label: Cách kiểm tra
+      description: Các bước trên CVAT local (http://localhost:8070), job dùng để thử, kết quả mong đợi
+    validations:
+      required: true

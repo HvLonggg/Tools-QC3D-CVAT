@@ -1,0 +1,25 @@
+name: Lỗi (bug)
+description: Báo lỗi của QC3D trên CVAT
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Hiện tượng
+      description: Thấy gì, mong đợi gì
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Các bước tái hiện
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Môi trường
+      description: Job / frame, trình duyệt, nhánh hoặc commit; log hoặc ảnh chụp (không dán mật khẩu, token)

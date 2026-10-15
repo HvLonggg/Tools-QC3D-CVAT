@@ -1,0 +1,26 @@
+# QC 3D AutoFix CI: backend tests of the QC engine on every push / PR to develop and main.
+# The upstream CVAT workflows are kept, inactive, in .github/upstream/workflows.
+name: QC3D
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install test dependencies
+        run: pip install "numpy==2.2.6" "pytest==9.1.1" "PyYAML==6.0.3"
+      - name: QC engine tests
+        run: python -m pytest -q cvat/apps/qc3d/tests
