@@ -198,3 +198,42 @@ class QcDetection(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["job", "frame", "model_key"], name="qc3d_unique_detection"),
         ]
+
+
+class QcWorkflowEvent(models.Model):
+    """One step of a job's review / acceptance workflow: who did what, when, with which numbers."""
+
+    job = models.ForeignKey("engine.Job", on_delete=models.CASCADE, related_name="qc3d_workflow_events")
+    action = models.CharField(max_length=32)
+    from_status = models.CharField(max_length=32)
+    to_status = models.CharField(max_length=32)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    date = models.DateTimeField(auto_now_add=True)
+    note = models.TextField(blank=True, default="")
+    metrics = models.JSONField(default=dict)  # QC / acceptance numbers at the time of the step
+
+    class Meta:
+        ordering = ("-date", "-id")
+        indexes = [models.Index(fields=["job", "date"])]
+
+
+class QcAcceptance(models.Model):
+    """Frames a QA checks to accept a job (one sample per acceptance round) and what they found."""
+
+    job = models.ForeignKey("engine.Job", on_delete=models.CASCADE, related_name="qc3d_acceptances")
+    round = models.IntegerField(default=1)
+    seed = models.IntegerField()
+    frames = models.JSONField(default=list)
+    # "frame" -> {"boxes_checked", "errors", "note", "by", "date"}
+    results = models.JSONField(default=dict)
+    criteria = models.JSONField(default=dict)  # guideline acceptance criteria when the sample was drawn
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_date = models.DateTimeField(auto_now_add=True)
+    closed_date = models.DateTimeField(null=True, blank=True)  # accepted or rejected
+
+    class Meta:
+        ordering = ("-id",)

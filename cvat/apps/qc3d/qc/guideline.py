@@ -168,6 +168,45 @@ def _triple(value, where: str, errors: list[str]) -> list[float] | None:
     return None if None in numbers else numbers
 
 
+# acceptance of a job (QA, doc/qc3d/12-nghiem-thu-api.md): key -> (Vietnamese label, min, max, default)
+ACCEPTANCE_LIMITS = {
+    "sample_ratio": ("Tỷ lệ frame lấy mẫu", 0.01, 1.0, 0.1),
+    "min_frames": ("Số frame mẫu tối thiểu", 1, 1000, 5),
+    "max_error_rate": ("Tỷ lệ box lỗi tối đa", 0.0, 1.0, 0.02),
+    "max_open_blockers": ("Số lỗi nghiêm trọng còn mở tối đa", 0, 1000, 0),
+}
+
+
+def acceptance_criteria(content: dict | None) -> dict:
+    """Acceptance criteria of a guideline, defaults for keys it does not set."""
+    criteria = {key: default for key, (_label, _lo, _hi, default) in ACCEPTANCE_LIMITS.items()}
+    criteria.update((content or {}).get("acceptance") or {})
+    return criteria
+
+
+def _normalize_acceptance(raw, errors: list[str], warnings: list[str]) -> dict:
+    if raw is None:
+        return acceptance_criteria(None)
+    if not isinstance(raw, dict):
+        errors.append("acceptance phải là object JSON")
+        return acceptance_criteria(None)
+    result = acceptance_criteria(None)
+    for key, value in raw.items():
+        if key not in ACCEPTANCE_LIMITS:
+            warnings.append(f"Bỏ qua tiêu chí nghiệm thu không hỗ trợ: {key}")
+            continue
+        label, lo, hi, default = ACCEPTANCE_LIMITS[key]
+        number = _number(value, f"Nghiệm thu {key}", errors)
+        if number is None:
+            continue
+        if not lo <= number <= hi or (isinstance(default, int) and not float(number).is_integer()):
+            errors.append(f"Nghiệm thu {key} ({label}) phải trong [{lo}, {hi}]"
+                          + (", số nguyên" if isinstance(default, int) else ""))
+            continue
+        result[key] = int(number) if isinstance(default, int) else float(number)
+    return result
+
+
 def normalize(content: dict) -> tuple[dict, list[str]]:
     """Validate a guideline and fill optional values. Raises GuidelineError; returns (content, warnings)."""
     if not isinstance(content, dict):
@@ -282,6 +321,7 @@ def normalize(content: dict) -> tuple[dict, list[str]]:
     if rules.get("R01") is False:
         errors.append("Không được tắt R01 (nhãn không hợp lệ)")
     autofix = _normalize_autofix(content.get("autofix"), names, errors, warnings)
+    acceptance = _normalize_acceptance(content.get("acceptance"), errors, warnings)
 
     if errors:
         raise GuidelineError(errors)
@@ -291,7 +331,7 @@ def normalize(content: dict) -> tuple[dict, list[str]]:
         notes = notes[:MAX_NOTES_CHARS]
     return {
         "format": GUIDELINE_FORMAT, "classes": classes, "thresholds": thresholds, "rules": rules,
-        "autofix": autofix, "notes": notes,
+        "autofix": autofix, "acceptance": acceptance, "notes": notes,
     }, warnings
 
 

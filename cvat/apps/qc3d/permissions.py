@@ -19,6 +19,8 @@ class Qc3dPermission(OpenPolicyAgentPermission):
         VIEW_GUIDELINE = "view:guideline"
         MANAGE_GUIDELINE = "manage:guideline"
         VIEW_QUALITY = "view:quality"
+        VIEW_WORKFLOW = "view:workflow"
+        ACT_WORKFLOW = "act:workflow"
 
     @classmethod
     def create(cls, request, view, obj, iam_context):
@@ -38,6 +40,8 @@ class Qc3dPermission(OpenPolicyAgentPermission):
             return [Scopes.VIEW_GUIDELINE if request.method == "GET" else Scopes.MANAGE_GUIDELINE]
         if view.action in ("detect", "check"):
             return [Scopes.VIEW_REPORT if request.method == "GET" else Scopes.RUN_QC]
+        if view.action in ("workflow", "acceptance_frame"):
+            return [Scopes.VIEW_WORKFLOW if request.method == "GET" else Scopes.ACT_WORKFLOW]
         if view.action == "job_settings":
             return [Scopes.VIEW_REPORT if request.method == "GET" else Scopes.DECIDE_ISSUE]
         return [
@@ -56,6 +60,8 @@ class Qc3dPermission(OpenPolicyAgentPermission):
                 "quality": Scopes.VIEW_QUALITY,
                 "quality_job": Scopes.VIEW_QUALITY,
                 "analytics": Scopes.VIEW_SUMMARY,
+                "workflow_board": Scopes.VIEW_WORKFLOW,
+                "overview": Scopes.VIEW_REPORT,
             }[view.action]
         ]
 

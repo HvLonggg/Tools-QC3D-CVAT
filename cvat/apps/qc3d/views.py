@@ -337,6 +337,68 @@ class Qc3dViewSet(viewsets.ViewSet):
         }
         return Response(result)
 
+    def _workflow_roles(self, request: ExtendedRequest) -> set[str]:
+        is_admin, roles = _roles(request)
+        return set(QcRole.values) if is_admin else set(roles)
+
+    @extend_schema(
+        summary="Review / acceptance workflow of a 3D job: state (GET) or one step (POST)",
+        responses={"200": OpenApiResponse()},
+    )
+    @action(detail=False, methods=["GET", "POST"], url_path=r"jobs/(?P<job_id>\d+)/workflow")
+    def workflow(self, request: ExtendedRequest, job_id: str):
+        from . import workflow
+
+        job = _get_job(request, int(job_id))
+        roles = self._workflow_roles(request)
+        if request.method == "GET":
+            return Response(workflow.state(job, request.user, roles))
+        action_name = request.data.get("action")
+        note = request.data.get("note") or ""
+        if not isinstance(action_name, str) or not isinstance(note, str):
+            raise ValidationError({"action": "Cần action (chuỗi) và note (chuỗi)"})
+        try:
+            return Response(workflow.act(job, request.user, roles, action_name, note,
+                                         override=request.data.get("override") is True))
+        except workflow.WorkflowError as e:
+            return Response({"detail": str(e)}, status=e.status_code)
+
+    @extend_schema(summary="Result of the QA on one acceptance sample frame", responses={"200": OpenApiResponse()})
+    @action(detail=False, methods=["PUT"], url_path=r"jobs/(?P<job_id>\d+)/acceptance/frames/(?P<frame>\d+)")
+    def acceptance_frame(self, request: ExtendedRequest, job_id: str, frame: str):
+        from . import workflow
+
+        job = _get_job(request, int(job_id))
+        try:
+            return Response(workflow.record_frame(job, request.user, self._workflow_roles(request), int(frame),
+                                                  request.data if isinstance(request.data, dict) else {}))
+        except workflow.WorkflowError as e:
+            return Response({"detail": str(e)}, status=e.status_code)
+
+    @extend_schema(summary="Workflow status of every visible 3D job", responses={"200": OpenApiResponse()})
+    @action(detail=False, methods=["GET"], url_path="workflow/board")
+    def workflow_board(self, request: ExtendedRequest):
+        from . import workflow
+
+        def number(name: str) -> int | None:
+            value = request.query_params.get(name)
+            return int(value) if value and value.isdigit() else None
+
+        status_filter = request.query_params.get("status") or None
+        if status_filter and status_filter not in dict(workflow.W.STATUSES):
+            raise ValidationError({"status": "Trạng thái không hợp lệ"})
+        return Response(workflow.board(
+            _visible_3d_jobs(request), status=status_filter, task=number("task"), assignee=number("assignee"),
+            search=(request.query_params.get("search") or "").strip()[:100],
+        ))
+
+    @extend_schema(summary="Bird's-eye overview map of a 3D job with its QC issues", responses={"200": OpenApiResponse()})
+    @action(detail=False, methods=["GET"], url_path=r"jobs/(?P<job_id>\d+)/overview")
+    def overview(self, request: ExtendedRequest, job_id: str):
+        from . import workflow
+
+        return Response(workflow.overview(_get_job(request, int(job_id))))
+
     @extend_schema(
         summary="QC check of a job in the background (model on missing frames, then QC): status or start",
         responses={"200": OpenApiResponse()},
