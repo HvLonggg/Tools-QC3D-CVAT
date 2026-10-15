@@ -23,7 +23,8 @@ const SEVERITY_STYLE: Record<Severity, { color: string; text: string; radius: nu
     major: { color: '#e08a00', text: 'Cần xử lý', radius: 6 },
     minor: { color: '#2875b5', text: 'Lưu ý', radius: 5 },
 };
-const CLASS_COLORS = ['#7b8db0', '#5aa98c', '#b48ad8', '#d4a056', '#6aa6d6', '#c97f8f', '#8fa86a'];
+// muted hues that do not compete with the severity colours (red / amber / blue) of the issues
+const CLASS_COLORS = ['#8796b3', '#4fae8f', '#a98bd6', '#8f8a6e', '#5fb3bf', '#c48fb6', '#93a86a'];
 const HEIGHT = 440;
 
 interface View { x: number; y: number; scale: number } // world point at the centre, pixels per metre
@@ -91,7 +92,13 @@ export default function OverviewMap({ data, jobId }: { data: MapData; jobId: num
     }, []);
     const bar = scaleBar(view.scale);
     const path = data.trajectory.map((p) => `${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ');
-    const ticks = data.trajectory.filter((p, i) => i % 10 === 0 || i === data.trajectory.length - 1);
+    // frame labels along the path, at least 34 px apart on screen (a slow vehicle stacks them otherwise)
+    const ticks: typeof data.trajectory = [];
+    data.trajectory.forEach((p, i) => {
+        const last = ticks[ticks.length - 1];
+        const far = !last || Math.hypot(sx(p.x) - sx(last.x), sy(p.y) - sy(last.y)) >= 34;
+        if ((i % 5 === 0 || i === data.trajectory.length - 1) && far) ticks.push(p);
+    });
 
     return (
         <div className='qc3d-map'>
