@@ -22,8 +22,7 @@ LABELS = {
     "bug": ("d73a4a", "Lỗi"),
     "area:backend": ("5319e7", "API, model, QC engine"),
     "area:ui": ("0e8a16", "Giao diện plugin QC3D, canvas 3D"),
-    "owner:claude": ("c5def5", "Tech lead / backend (Claude Code)"),
-    "owner:codex": ("bfd4f2", "Frontend (Codex)"),
+    "owner:claude": ("c5def5", "Kỹ sư dự án (Claude Code)"),
     "priority:high": ("b60205", "Làm trước"),
 }
 
@@ -42,7 +41,7 @@ ISSUES = [
      "- [ ] Tiêu chí nghiệm thu trong guideline, có mặc định\n- [ ] Test backend đạt; chạy thử toàn luồng qua API\n\n"
      "## Cách kiểm tra\n`pytest -q cvat/apps/qc3d/tests`; chạy toàn luồng trên job 24 qua API (nộp → … → chốt → mở lại)."),
     ("UI-1: Trang Trạng thái job (/qc3d/board)",
-     ["task", "area:ui", "owner:codex"],
+     ["task", "area:ui", "owner:claude"],
      f"Dùng `GET workflow/board` (`{CONTRACT}` mục 4.4).\n\n## Tiêu chí nghiệm thu\n"
      "- [ ] Mục menu \"Trạng thái job\"\n- [ ] Kanban 8 cột theo thứ tự quy trình, có số lượng; thẻ job: tên task, #job, "
      "số frame, người gán nhãn, lỗi QC còn mở theo mức độ, tỷ lệ lỗi nghiệm thu, hành động cuối\n"
@@ -51,7 +50,7 @@ ISSUES = [
      "## Cách kiểm tra\nMở `/qc3d/board`: job 23, 24 hiện đúng cột; đổi trạng thái job 24 ở trang job → board cập nhật."
      + TEST_UI),
     ("UI-2: Trang Nghiệm thu QA (/qc3d/qa)",
-     ["task", "area:ui", "owner:codex", "priority:high"],
+     ["task", "area:ui", "owner:claude", "priority:high"],
      f"Thay `PlannedPage`. API: `jobs/{{id}}/workflow`, `acceptance/frames/{{frame}}` (`{CONTRACT}` mục 2–4).\n\n"
      "## Tiêu chí nghiệm thu\n- [ ] Danh sách job Chờ / Đang nghiệm thu (lấy từ board)\n"
      "- [ ] Khu chấm mẫu: danh sách frame mẫu, nút mở frame trên CVAT (`/tasks/{task}/jobs/{job}?frame=N`), "
@@ -61,7 +60,7 @@ ISSUES = [
      "duyệt vượt + lý do\n- [ ] Lỗi server hiện đúng `detail`\n\n## Cách kiểm tra\n"
      "Job 24 ở Chờ nghiệm thu → Bắt đầu → chấm đủ mẫu (một lần có lỗi vượt ngưỡng để thấy Không đạt) → Đạt." + TEST_UI),
     ("UI-3: Trang job – quy trình, lịch sử, bản đồ tổng quan",
-     ["task", "area:ui", "owner:codex", "priority:high"],
+     ["task", "area:ui", "owner:claude", "priority:high"],
      f"API: `jobs/{{id}}/workflow`, `jobs/{{id}}/overview` (`{CONTRACT}` mục 4.1, 4.2, 4.5).\n\n## Tiêu chí nghiệm thu\n"
      "- [ ] Thanh bước: Gán nhãn → QC → Nghiệm thu → Chốt, bước hiện tại nổi bật; trạng thái Bị trả lại rõ ràng\n"
      "- [ ] Nút hành động theo `actions` (ẩn nếu không có; disabled kèm `reason` dạng tooltip; hỏi ghi chú khi "
@@ -73,14 +72,14 @@ ISSUES = [
      "## Cách kiểm tra\nJob 23: bản đồ hiện ~84 điểm quỹ đạo, ~2.000 vật, các vấn đề; bấm 1 vấn đề → mở đúng frame "
      "và chọn đúng box." + TEST_UI),
     ("UI-4: Hàng đợi review – hành động duyệt",
-     ["task", "area:ui", "owner:codex"],
+     ["task", "area:ui", "owner:claude"],
      f"`/qc3d/review`: thêm Bắt đầu QC / QC đạt / Trả lại (ghi chú) theo `actions` (`{CONTRACT}` mục 2).\n\n"
      "## Tiêu chí nghiệm thu\n- [ ] Mỗi job hiện trạng thái quy trình và các nút được phép\n"
      "- [ ] QC đạt bị khoá kèm lý do khi QC cũ / chưa chạy toàn job / còn lỗi nghiêm trọng\n"
      "- [ ] Trả lại bắt buộc ghi chú; sau hành động danh sách cập nhật\n\n## Cách kiểm tra\n"
      "Job 24: Nộp → Bắt đầu QC → thử QC đạt khi QC cũ (bị khoá) → Chạy QC → QC đạt." + TEST_UI),
     ("UI-5: Hoàn thiện biểu đồ trang QC3D",
-     ["task", "area:ui", "owner:codex"],
+     ["task", "area:ui", "owner:claude"],
      "Trang Tổng quan, Phân tích, Chất lượng của tôi (chart.js có sẵn).\n\n## Tiêu chí nghiệm thu\n"
      "- [ ] Bảng màu thống nhất, có chú giải; mức độ lỗi: nghiêm trọng #d9384a, cần xử lý #a86400, lưu ý #2875b5\n"
      "- [ ] Trạng thái rỗng / đang tải cho mọi biểu đồ; tooltip có đơn vị; số định dạng vi-VN\n"
@@ -88,7 +87,7 @@ ISSUES = [
      "- [ ] Thêm: phễu quy trình (số job mỗi trạng thái, từ `workflow/board`) và tỷ lệ đạt nghiệm thu\n\n"
      "## Cách kiểm tra\nMở 3 trang, so ảnh trước/sau trong PR." + TEST_UI),
     ("UI-6: Cảnh 3D khi duyệt – dễ nhìn hơn",
-     ["task", "area:ui", "owner:codex"],
+     ["task", "area:ui", "owner:claude"],
      "`cvat-canvas3d` + tab Hiển thị của panel QC Check 3D.\n\n## Tiêu chí nghiệm thu\n"
      "- [ ] Nhãn trên box dễ đọc (nền mờ, cỡ chữ theo khoảng cách, không che nhau khi đông)\n"
      "- [ ] Lưới mặt đất và vòng khoảng cách 10/20/30 m quanh xe, bật/tắt ở tab Hiển thị (lưu localStorage)\n"
@@ -96,7 +95,7 @@ ISSUES = [
      "- [ ] Giữ nguyên `configure` hiện có (`qcMarkers`, `pointColorMode`, …)\n\n## Cách kiểm tra\n"
      "Job 23 frame 0: bật/tắt lưới, vòng khoảng cách; đổi chế độ tô màu; ảnh trước/sau." + TEST_UI),
     ("UI-7: Guideline – tiêu chí nghiệm thu",
-     ["task", "area:ui", "owner:codex"],
+     ["task", "area:ui", "owner:claude"],
      f"Trình soạn guideline: nhập `acceptance` (`{CONTRACT}` mục 3; giới hạn ở `qc/guideline.py` ACCEPTANCE_LIMITS).\n\n"
      "## Tiêu chí nghiệm thu\n- [ ] 4 ô: tỷ lệ frame mẫu (%), số frame tối thiểu, tỷ lệ lỗi tối đa (%), lỗi nghiêm trọng "
      "còn mở tối đa; hiện mặc định\n- [ ] Lưu được; lỗi giới hạn hiện đúng thông báo server\n\n"

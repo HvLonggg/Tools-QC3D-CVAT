@@ -1,6 +1,6 @@
 # Luồng duyệt và nghiệm thu job 3D — hợp đồng API (Sprint 4)
 
-Backend (Claude) làm đúng hợp đồng này, frontend (Codex) dựa vào nó. Muốn đổi thì mở Issue và thống nhất trước.
+Backend làm đúng hợp đồng này, frontend dựa vào nó. Đổi API thì cập nhật file này trong cùng PR.
 
 Tất cả endpoint nằm dưới `/api/qc3d/`, xác thực bằng phiên CVAT như các API QC3D hiện có. Trong ví dụ, giá trị chỉ minh họa.
 
@@ -146,16 +146,14 @@ Bản đồ tổng quan job nhìn từ trên xuống. Tọa độ là hệ của
 | BE-1 | Model `QcWorkflowEvent`, `QcAcceptance` + migration; dịch vụ chuyển trạng thái; tiêu chí trong guideline | Claude |
 | BE-2 | Endpoint 4.1–4.5, quyền, kiểm tra điều kiện | Claude |
 | BE-3 | Test backend cho mọi chuyển trạng thái, quyền, tiêu chí, mẫu | Claude |
-| UI-1 | Trang **Trạng thái job** `/qc3d/board`: kanban 8 cột + chế độ bảng, lọc, đi tới job | Codex |
-| UI-2 | Trang **Nghiệm thu QA** `/qc3d/qa` (thay `PlannedPage`): danh sách chờ/đang nghiệm thu; khu chấm mẫu: frame mẫu, mở frame trên CVAT, nhập số box/lỗi/ghi chú, tỷ lệ lỗi trực tiếp so với ngưỡng, nút Đạt / Không đạt | Codex |
-| UI-3 | Trang job `/qc3d/jobs/:id`: thanh bước quy trình, nút hành động theo `actions`, dòng thời gian lịch sử, tóm tắt QC, **bản đồ tổng quan** (SVG/canvas; màu theo mức lỗi; bấm để mở frame) | Codex |
-| UI-4 | Hàng đợi review `/qc3d/review`: nút Bắt đầu QC / Đạt / Trả lại (kèm ghi chú) theo `actions` | Codex |
-| UI-5 | Biểu đồ Tổng quan / Phân tích / Chất lượng của tôi: bảng màu thống nhất, trạng thái rỗng, responsive; thêm phễu quy trình và tỷ lệ đạt nghiệm thu | Codex |
-| UI-6 | Cảnh 3D khi duyệt: nhãn trên box dễ đọc, lưới mặt đất và vòng khoảng cách 10/20/30 m (bật/tắt ở tab Hiển thị), chú giải màu | Codex |
-| UI-7 | Trình soạn guideline: nhập tiêu chí nghiệm thu (mục 3) | Codex |
+| UI-1 | Trang **Trạng thái job** `/qc3d/board`: kanban 8 cột + chế độ bảng, lọc, đi tới job | Claude |
+| UI-2 | Trang **Nghiệm thu QA** `/qc3d/qa` (thay `PlannedPage`): danh sách chờ/đang nghiệm thu; khu chấm mẫu: frame mẫu, mở frame trên CVAT, nhập số box/lỗi/ghi chú, tỷ lệ lỗi trực tiếp so với ngưỡng, nút Đạt / Không đạt | Claude |
+| UI-3 | Trang job `/qc3d/jobs/:id`: thanh bước quy trình, nút hành động theo `actions`, dòng thời gian lịch sử, tóm tắt QC, **bản đồ tổng quan** (SVG/canvas; màu theo mức lỗi; bấm để mở frame) | Claude |
+| UI-4 | Hàng đợi review `/qc3d/review`: nút Bắt đầu QC / Đạt / Trả lại (kèm ghi chú) theo `actions` | Claude |
+| UI-5 | Biểu đồ Tổng quan / Phân tích / Chất lượng của tôi: bảng màu thống nhất, trạng thái rỗng, responsive; thêm phễu quy trình và tỷ lệ đạt nghiệm thu | Claude |
+| UI-6 | Cảnh 3D khi duyệt: nhãn trên box dễ đọc, lưới mặt đất và vòng khoảng cách 10/20/30 m (bật/tắt ở tab Hiển thị), chú giải màu | Claude |
+| UI-7 | Trình soạn guideline: nhập tiêu chí nghiệm thu (mục 3) | Claude |
 | INT-1 | Review PR, build và deploy, kiểm tra toàn luồng trên CVAT local, cập nhật tài liệu | Claude |
 
 Thứ tự:
-- BE-1 → BE-2 làm trước.
-- UI-5 và UI-6 không cần API mới, Codex bắt đầu được ngay.
-- UI-1 tới UI-4 dựng giao diện theo hợp đồng này, nối API khi BE-2 vào `develop`.
+- BE-1 → BE-2 (xong) → UI-3, UI-2, UI-1, UI-4 → UI-5, UI-6, UI-7 → INT-1.

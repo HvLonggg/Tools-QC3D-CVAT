@@ -2,15 +2,14 @@
 
 Repo: https://github.com/HvLonggg/Tools-QC3D-CVAT. Dự án dựa trên CVAT v2.74.1.
 
-Tài liệu này dành cho mọi thành viên trong nhóm, kể cả agent AI (Claude Code, Codex). Đọc hết trước khi làm việc.
+Tài liệu này dành cho mọi thành viên trong nhóm, kể cả agent AI (Claude Code). Đọc hết trước khi làm việc.
 
 ## 1. Vai trò
 
 | Vai trò | Ai | Phụ trách |
 | --- | --- | --- |
 | Chủ dự án (PO) | Hoàng Long (@HvLonggg) | Chốt yêu cầu, nghiệm thu nghiệp vụ, merge vào `main` |
-| Tech lead, backend, tích hợp | Claude Code | Luồng nghiệp vụ, API, model, migration, test backend, review PR, build/deploy, tích hợp vào `develop` |
-| Frontend | Codex | Giao diện plugin QC3D, các trang, biểu đồ, cảnh 3D (canvas3d) |
+| Kỹ sư dự án (backend + frontend + tích hợp) | Claude Code | Luồng nghiệp vụ, API, model, migration, giao diện plugin QC3D, biểu đồ, cảnh 3D (canvas3d), test, build/deploy, PR vào `develop` |
 
 ## 2. Nhánh và Pull Request
 
@@ -25,21 +24,21 @@ Tài liệu này dành cho mọi thành viên trong nhóm, kể cả agent AI (C
   - được tech lead review;
   - chỉ merge khi test đạt.
 - Không force-push lên `develop` hoặc `main`. Không commit trực tiếp lên hai nhánh này.
-- Codex làm việc trong worktree riêng, không dùng chung thư mục với Claude:
+- Người hoặc agent thứ hai tham gia: làm trong worktree riêng, không dùng chung thư mục:
 
   ```
-  git worktree add ../cvat-day2-ui -b feature/<issue>-<tên> develop
+  git worktree add ../cvat-day2-<tên> -b feature/<issue>-<tên> develop
   ```
 
-## 3. Phạm vi file (tránh sửa chồng)
+## 3. Phạm vi file
 
-| Khu vực | Chủ sở hữu | Ghi chú |
-| --- | --- | --- |
-| `cvat/apps/qc3d/**` (backend, migration, test) | Claude | Frontend cần API mới thì mở Issue, không tự sửa |
-| `utils/qc3d/**`, `doc/qc3d/0*.md` tới `11-*.md` | Claude | |
-| `cvat-ui/plugins/qc3d/**` (trang, panel, `api.ts`, styles) | Codex | Claude chỉ sửa lỗi khẩn, có ghi chú trong PR |
-| `cvat-canvas3d/src/**` | Codex | Giữ nguyên các hàm `configure` mà plugin đang dùng (`qcMarkers`, `pointColorMode`…) |
-| `doc/qc3d/12-nghiem-thu-api.md` (hợp đồng API) | Claude | Muốn đổi hợp đồng: mở Issue, hai bên thống nhất rồi mới sửa |
+| Khu vực | Ghi chú |
+| --- | --- |
+| `cvat/apps/qc3d/**` | Backend, migration, test |
+| `utils/qc3d/**`, `doc/qc3d/**` | Công cụ dữ liệu / model, tài liệu |
+| `cvat-ui/plugins/qc3d/**` | Trang, panel, `api.ts`, styles |
+| `cvat-canvas3d/src/**` | Giữ nguyên các hàm `configure` mà plugin đang dùng (`qcMarkers`, `pointColorMode`…) |
+| `doc/qc3d/12-nghiem-thu-api.md` | Hợp đồng API: đổi API thì cập nhật file này trong cùng PR |
 
 ## 4. Quy tắc kỹ thuật
 
